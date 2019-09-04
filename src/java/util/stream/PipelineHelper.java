@@ -51,6 +51,7 @@ import java.util.function.IntFunction;
  *
  * @param <P_OUT> type of output elements from the pipeline
  * @since 1.8
+ * 管道的辅助类
  */
 abstract class PipelineHelper<P_OUT> {
 
@@ -58,6 +59,7 @@ abstract class PipelineHelper<P_OUT> {
      * Gets the stream shape for the source of the pipeline segment.
      *
      * @return the stream shape for the source of the pipeline segment.
+     * 获取数据源的形状  比如 Int Long Double Reference
      */
     abstract StreamShape getSourceShape();
 
@@ -68,6 +70,7 @@ abstract class PipelineHelper<P_OUT> {
      *
      * @return the combined stream and operation flags
      * @see StreamOpFlag
+     * 获取描述标识
      */
     abstract int getStreamAndOpFlags();
 
@@ -87,6 +90,7 @@ abstract class PipelineHelper<P_OUT> {
      * @param spliterator the spliterator describing the relevant portion of the
      *        source data
      * @return the exact size if known, or -1 if infinite or unknown
+     * 返回尺寸大小
      */
     abstract<P_IN> long exactOutputSizeIfKnown(Spliterator<P_IN> spliterator);
 
@@ -103,6 +107,7 @@ abstract class PipelineHelper<P_OUT> {
      *
      * @param sink the {@code Sink} to receive the results
      * @param spliterator the spliterator describing the source input to process
+     *                    包装并复制信息
      */
     abstract<P_IN, S extends Sink<P_OUT>> S wrapAndCopyInto(S sink, Spliterator<P_IN> spliterator);
 
@@ -120,6 +125,7 @@ abstract class PipelineHelper<P_OUT> {
      *
      * @param wrappedSink the destination {@code Sink}
      * @param spliterator the source {@code Spliterator}
+     *                    拷贝信息???
      */
     abstract<P_IN> void copyInto(Sink<P_IN> wrappedSink, Spliterator<P_IN> spliterator);
 
@@ -136,6 +142,7 @@ abstract class PipelineHelper<P_OUT> {
      *
      * @param wrappedSink the destination {@code Sink}
      * @param spliterator the source {@code Spliterator}
+     *                    拷贝信息并关闭对象
      */
     abstract <P_IN> void copyIntoWithCancel(Sink<P_IN> wrappedSink, Spliterator<P_IN> spliterator);
 
@@ -149,11 +156,12 @@ abstract class PipelineHelper<P_OUT> {
      * @param sink the {@code Sink} to receive the results
      * @return a {@code Sink} that implements the pipeline stages and sends
      *         results to the provided {@code Sink}
+     *         包装 sink对象
      */
     abstract<P_IN> Sink<P_IN> wrapSink(Sink<P_OUT> sink);
 
     /**
-     *
+     * 包装 Split 对象
      * @param spliterator
      * @param <P_IN>
      * @return
@@ -171,6 +179,7 @@ abstract class PipelineHelper<P_OUT> {
      * @param generator a factory function for array instances
      * @return a {@code Node.Builder} compatible with the output shape of this
      *         {@code PipelineHelper}
+     *         构建一个 Builder 对象
      */
     abstract Node.Builder<P_OUT> makeNodeBuilder(long exactSizeIfKnown,
                                                  IntFunction<P_OUT[]> generator);
@@ -196,6 +205,7 @@ abstract class PipelineHelper<P_OUT> {
      *        shape of the computation tree.
      * @param generator a factory function for array instances
      * @return the {@code Node} containing all output elements
+     * 将结果生成一个 Node
      */
     abstract<P_IN> Node<P_OUT> evaluate(Spliterator<P_IN> spliterator,
                                         boolean flatten,

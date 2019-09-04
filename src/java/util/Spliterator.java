@@ -292,6 +292,7 @@ import java.util.function.LongConsumer;
  *
  * @see Collection
  * @since 1.8
+ * 具备遍历和 划分元素能力的对象  该接口意味着具备并行的能力 对应到 流的 并行执行可能就是通过将内部的元素 划分开后 通过线程池并行执行再整合结果
  */
 public interface Spliterator<T> {
     /**
@@ -305,6 +306,7 @@ public interface Spliterator<T> {
      * @return {@code false} if no remaining elements existed
      * upon entry to this method, else {@code true}.
      * @throws NullPointerException if the specified action is null
+     * 类似于 iterator.hasNext() 不过这里在获取下个元素的同时 还传入一个函数对象
      */
     boolean tryAdvance(Consumer<? super T> action);
 
@@ -321,6 +323,7 @@ public interface Spliterator<T> {
      *
      * @param action The action
      * @throws NullPointerException if the specified action is null
+     * 默认实现就是不断的 通过 tryAdvance 获取下个元素 并通过action 处理
      */
     default void forEachRemaining(Consumer<? super T> action) {
         do { } while (tryAdvance(action));
@@ -366,6 +369,7 @@ public interface Spliterator<T> {
      *
      * @return a {@code Spliterator} covering some portion of the
      * elements, or {@code null} if this spliterator cannot be split
+     * 对内部的元素进行拆分
      */
     Spliterator<T> trySplit();
 
@@ -391,6 +395,7 @@ public interface Spliterator<T> {
      *
      * @return the estimated size, or {@code Long.MAX_VALUE} if infinite,
      *         unknown, or too expensive to compute.
+     *         预估拆分后的长度???
      */
     long estimateSize();
 
@@ -403,6 +408,7 @@ public interface Spliterator<T> {
      * {@code -1} otherwise.
      *
      * @return the exact size, if known, else {@code -1}.
+     * 返回精确的长度
      */
     default long getExactSizeIfKnown() {
         return (characteristics() & SIZED) == 0 ? -1L : estimateSize();
@@ -428,6 +434,7 @@ public interface Spliterator<T> {
      * and {@link #CONCURRENT}.
      *
      * @return a representation of characteristics
+     * 返回特征信息  应该是通过位运算
      */
     int characteristics();
 
@@ -442,6 +449,7 @@ public interface Spliterator<T> {
      * @param characteristics the characteristics to check for
      * @return {@code true} if all the specified characteristics are present,
      * else {@code false}
+     * 判断是否包含某种特性
      */
     default boolean hasCharacteristics(int characteristics) {
         return (characteristics() & characteristics) == characteristics;
@@ -595,9 +603,15 @@ public interface Spliterator<T> {
      * @see Spliterator.OfLong
      * @see Spliterator.OfDouble
      * @since 1.8
+     * 基于原始类型的迭代器  T 元素类型 T_CONS 消费者类型 T_SPLITR 分裂迭代器的类型
      */
     public interface OfPrimitive<T, T_CONS, T_SPLITR extends Spliterator.OfPrimitive<T, T_CONS, T_SPLITR>>
             extends Spliterator<T> {
+
+        /**
+         * T_SPLITR 代表分裂迭代器的 泛型
+         * @return
+         */
         @Override
         T_SPLITR trySplit();
 

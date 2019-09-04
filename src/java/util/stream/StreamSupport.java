@@ -36,6 +36,7 @@ import java.util.function.Supplier;
  * the various {@code Stream} classes.
  *
  * @since 1.8
+ * 创建流的辅助对象
  */
 public final class StreamSupport {
 
@@ -133,6 +134,7 @@ public final class StreamSupport {
      *        stream; if {@code false} the returned stream is a sequential
      *        stream.
      * @return a new sequential or parallel {@code IntStream}
+     * 将迭代器对象变成了数据流
      */
     public static IntStream intStream(Spliterator.OfInt spliterator, boolean parallel) {
         return new IntPipeline.Head<>(spliterator,

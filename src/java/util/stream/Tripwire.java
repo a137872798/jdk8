@@ -44,6 +44,7 @@ import sun.util.logging.PlatformLogger;
  * }</pre>
  *
  * @since 1.8
+ * 只是一个 警告对象 当操作Stream 时 遇到需要解包装的场景就打印日志
  */
 final class Tripwire {
     private static final String TRIPWIRE_PROPERTY = "org.openjdk.java.util.stream.tripwire";

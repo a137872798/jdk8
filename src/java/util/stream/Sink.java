@@ -50,8 +50,8 @@ import java.util.function.LongConsumer;
  * the initial state, where it can be re-used.  Data-accepting methods (such as
  * {@code accept()} are only valid in the active state.
  *
- * @apiNote
- * A stream pipeline consists of a source, zero or more intermediate stages
+ * @param <T> type of elements for value streams
+ * @apiNote A stream pipeline consists of a source, zero or more intermediate stages
  * (such as filtering or mapping), and a terminal stage, such as reduction or
  * for-each.  For concreteness, consider the pipeline:
  *
@@ -110,22 +110,24 @@ import java.util.function.LongConsumer;
  * must call the {@code accept(int)} method when emitting values to the downstream.
  * The {@code accept()} method applies the mapping function from {@code U} to
  * {@code int} and passes the resulting value to the downstream {@code Sink}.
- *
- * @param <T> type of elements for value streams
  * @since 1.8
+ * 拓展 Consumer
  */
 interface Sink<T> extends Consumer<T> {
     /**
      * Resets the sink state to receive a fresh data set.  This must be called
      * before sending any data to the sink.  After calling {@link #end()},
      * you may call this method to reset the sink for another calculation.
-     * @param size The exact size of the data to be pushed downstream, if
-     * known or {@code -1} if unknown or infinite.
      *
-     * <p>Prior to this call, the sink must be in the initial state, and after
-     * this call it is in the active state.
+     * @param size The exact size of the data to be pushed downstream, if
+     *             known or {@code -1} if unknown or infinite.
+     *
+     *             <p>Prior to this call, the sink must be in the initial state, and after
+     *             this call it is in the active state.
+     *             设定明确的大小 (关于会发送多少元素到下游)
      */
-    default void begin(long size) {}
+    default void begin(long size) {
+    }
 
     /**
      * Indicates that all elements have been pushed.  If the {@code Sink} is
@@ -134,15 +136,17 @@ interface Sink<T> extends Consumer<T> {
      *
      * <p>Prior to this call, the sink must be in the active state, and after
      * this call it is returned to the initial state.
+     * 代表所有元素都已经推到下游了
      */
-    default void end() {}
+    default void end() {
+    }
 
     /**
      * Indicates that this {@code Sink} does not wish to receive any more data.
      *
-     * @implSpec The default implementation always returns false.
-     *
      * @return true if cancellation is requested
+     * 代表不期望接收其他元素
+     * @implSpec The default implementation always returns false.
      */
     default boolean cancellationRequested() {
         return false;
@@ -151,9 +155,9 @@ interface Sink<T> extends Consumer<T> {
     /**
      * Accepts an int value.
      *
-     * @implSpec The default implementation throws IllegalStateException.
-     *
      * @throws IllegalStateException if this sink does not accept int values
+     *                               接收一个新元素 该元素应该会以某种方式发到下游
+     * @implSpec The default implementation throws IllegalStateException.
      */
     default void accept(int value) {
         throw new IllegalStateException("called wrong accept method");
@@ -162,9 +166,9 @@ interface Sink<T> extends Consumer<T> {
     /**
      * Accepts a long value.
      *
-     * @implSpec The default implementation throws IllegalStateException.
-     *
      * @throws IllegalStateException if this sink does not accept long values
+     * @implSpec The default implementation throws IllegalStateException.
+     * 处理接收到的long 对象
      */
     default void accept(long value) {
         throw new IllegalStateException("called wrong accept method");
@@ -173,9 +177,9 @@ interface Sink<T> extends Consumer<T> {
     /**
      * Accepts a double value.
      *
-     * @implSpec The default implementation throws IllegalStateException.
-     *
      * @throws IllegalStateException if this sink does not accept double values
+     * @implSpec The default implementation throws IllegalStateException.
+     * 处理double
      */
     default void accept(double value) {
         throw new IllegalStateException("called wrong accept method");
@@ -240,10 +244,20 @@ interface Sink<T> extends Consumer<T> {
      * {@code Sink} of unknown input shape and produces a {@code Sink<T>}.  The
      * implementation of the {@code accept()} method must call the correct
      * {@code accept()} method on the downstream {@code Sink}.
+     * Sink 的骨架类 Sink 通常是一组链式对象 每个 Sink 会将接收到的元素 传递到下游
+     * 子类 需要重写 Consumer.accept 方法 该方法是从 Sink 继承来的
      */
     static abstract class ChainedReference<T, E_OUT> implements Sink<T> {
+
+        /**
+         * 下游对象
+         */
         protected final Sink<? super E_OUT> downstream;
 
+        /**
+         * 通过传入下游对象进行初始化
+         * @param downstream
+         */
         public ChainedReference(Sink<? super E_OUT> downstream) {
             this.downstream = Objects.requireNonNull(downstream);
         }
@@ -272,6 +286,7 @@ interface Sink<T> extends Consumer<T> {
      * {@code Sink} of unknown input shape and produces a {@code Sink.OfInt}.
      * The implementation of the {@code accept()} method must call the correct
      * {@code accept()} method on the downstream {@code Sink}.
+     *
      */
     static abstract class ChainedInt<E_OUT> implements Sink.OfInt {
         protected final Sink<? super E_OUT> downstream;

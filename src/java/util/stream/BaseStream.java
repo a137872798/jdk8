@@ -60,6 +60,8 @@ import java.util.function.Predicate;
  * @see LongStream
  * @see DoubleStream
  * @see <a href="package-summary.html">java.util.stream</a>
+ * Stream 的 基础 继承了 可关闭接口
+ * T 代表 本stream 实际维护的类型 而 S 代表该Stream 可以转换的 新流类型
  */
 public interface BaseStream<T, S extends BaseStream<T, S>>
         extends AutoCloseable {
@@ -70,6 +72,7 @@ public interface BaseStream<T, S extends BaseStream<T, S>>
      * operation</a>.
      *
      * @return the element iterator for this stream
+     * 可以将流看作是一个迭代器对象
      */
     Iterator<T> iterator();
 
@@ -80,6 +83,7 @@ public interface BaseStream<T, S extends BaseStream<T, S>>
      * operation</a>.
      *
      * @return the element spliterator for this stream
+     * 创建一个 可拆分 迭代器
      */
     Spliterator<T> spliterator();
 
@@ -89,6 +93,7 @@ public interface BaseStream<T, S extends BaseStream<T, S>>
      * terminal stream operation method may yield unpredictable results.
      *
      * @return {@code true} if this stream would execute in parallel if executed
+     * 是否并行执行 也就是并非所有的流都是并发处理的 只有在并行模式下 stream.xxx 才是并行运行
      */
     boolean isParallel();
 
@@ -101,6 +106,7 @@ public interface BaseStream<T, S extends BaseStream<T, S>>
      * operation</a>.
      *
      * @return a sequential stream
+     * 返回一个顺序的等效流  如果 source 就是顺序的 就会返回原对象 否则会使用source 的元素生成一个新的顺序流
      */
     S sequential();
 
@@ -113,6 +119,7 @@ public interface BaseStream<T, S extends BaseStream<T, S>>
      * operation</a>.
      *
      * @return a parallel stream
+     * 返回一个等效并行流
      */
     S parallel();
 
@@ -126,6 +133,7 @@ public interface BaseStream<T, S extends BaseStream<T, S>>
      * operation</a>.
      *
      * @return an unordered stream
+     * 返回一个打乱顺序的流
      */
     S unordered();
 
@@ -146,6 +154,7 @@ public interface BaseStream<T, S extends BaseStream<T, S>>
      *
      * @param closeHandler A task to execute when the stream is closed
      * @return a stream with a handler that is run if the stream is closed
+     * 返回一个等效流 并包含一个 close 处理器对象 当触发close 时会触发处理器的方法
      */
     S onClose(Runnable closeHandler);
 

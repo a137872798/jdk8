@@ -56,6 +56,7 @@ import java.util.function.LongConsumer;
  *
  * @param <T> the type of elements.
  * @since 1.8
+ * 用于描述序列信息  一个 Node对象维护了  指定数量的元素 可以通过 count() spliterator() forEach() 访问内部的元素
  */
 interface Node<T> {
 
@@ -65,6 +66,7 @@ interface Node<T> {
      *
      * @return a {@code Spliterator} describing the elements contained in this
      *         {@code Node}
+     *         将该节点内维护的所有 Element 转换成一个 Spliterator
      */
     Spliterator<T> spliterator();
 
@@ -75,6 +77,7 @@ interface Node<T> {
      *
      * @param consumer a {@code Consumer} that is to be invoked with each
      *        element in this {@code Node}
+     *                 针对每个元素 执行consumer
      */
     void forEach(Consumer<? super T> consumer);
 
@@ -84,6 +87,7 @@ interface Node<T> {
      * @implSpec The default implementation returns zero.
      *
      * @return the number of child nodes
+     * 获取该 Node 的子节点  因为有种Node 实现就是 树形 包含左右节点
      */
     default int getChildCount() {
         return 0;
@@ -99,6 +103,7 @@ interface Node<T> {
      * @return the child node
      * @throws IndexOutOfBoundsException if the index is less than 0 or greater
      *         than or equal to the number of child nodes
+     *         获取指定下标的元素
      */
     default Node<T> getChild(int i) {
         throw new IndexOutOfBoundsException();
@@ -116,12 +121,16 @@ interface Node<T> {
      * @param generator A function to be used to create a new array, if needed,
      *                  for reference nodes.
      * @return the truncated node
+     * 将 所有 元素 通过 from,to 指针 进行截断  generator 接收size 并返回一个存储元素的容器
      */
     default Node<T> truncate(long from, long to, IntFunction<T[]> generator) {
         if (from == 0 && to == count())
             return this;
+        // 该Node 转换成Split 对象
         Spliterator<T> spliterator = spliterator();
+        // 代表截取后的长度
         long size = to - from;
+        // generator 应该是在 往Node 填数据时触发的
         Node.Builder<T> nodeBuilder = Nodes.builder(size, generator);
         nodeBuilder.begin(size);
         for (int i = 0; i < from && spliterator.tryAdvance(e -> { }); i++) { }
@@ -184,6 +193,7 @@ interface Node<T> {
     /**
      * A mutable builder for a {@code Node} that implements {@link Sink}, which
      * builds a flat node containing the elements that have been pushed to it.
+     * 构建器接口
      */
     interface Builder<T> extends Sink<T> {
 
@@ -192,6 +202,7 @@ interface Node<T> {
          * pushed and signalled with an invocation of {@link Sink#end()}.
          *
          * @return the resulting {@code Node}
+         * 生成Node 对象
          */
         Node<T> build();
 
@@ -220,6 +231,14 @@ interface Node<T> {
         }
     }
 
+    /**
+     * 处理原始类型的接口
+     * @param <T>
+     * @param <T_CONS>
+     * @param <T_ARR>
+     * @param <T_SPLITR>
+     * @param <T_NODE>
+     */
     public interface OfPrimitive<T, T_CONS, T_ARR,
                                  T_SPLITR extends Spliterator.OfPrimitive<T, T_CONS, T_SPLITR>,
                                  T_NODE extends OfPrimitive<T, T_CONS, T_ARR, T_SPLITR, T_NODE>>

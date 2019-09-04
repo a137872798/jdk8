@@ -45,6 +45,7 @@ package java.util.stream;
  * primitive type.
  *
  * @since 1.8
+ * 代表 Stream 类型的枚举  REFERENCE 代表对象引用
  */
 enum StreamShape {
     /**

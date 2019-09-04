@@ -150,6 +150,7 @@ import java.util.function.UnaryOperator;
  * @see LongStream
  * @see DoubleStream
  * @see <a href="package-summary.html">java.util.stream</a>
+ * Stream 本身 是 含有一个责任链的概念的 就是可以对该流进行各种加工和处理 针对该流 返回的各种等效流 还是Stream 类型
  */
 public interface Stream<T> extends BaseStream<T, Stream<T>> {
 
@@ -165,6 +166,7 @@ public interface Stream<T> extends BaseStream<T, Stream<T>> {
      *                  predicate to apply to each element to determine if it
      *                  should be included
      * @return the new stream
+     * 使用谓语对象 对流进行过滤
      */
     Stream<T> filter(Predicate<? super T> predicate);
 
@@ -180,6 +182,7 @@ public interface Stream<T> extends BaseStream<T, Stream<T>> {
      *               <a href="package-summary.html#Statelessness">stateless</a>
      *               function to apply to each element
      * @return the new stream
+     * 使用 Function 映射函数对元素进行映射
      */
     <R> Stream<R> map(Function<? super T, ? extends R> mapper);
 
@@ -194,6 +197,7 @@ public interface Stream<T> extends BaseStream<T, Stream<T>> {
      *               <a href="package-summary.html#Statelessness">stateless</a>
      *               function to apply to each element
      * @return the new stream
+     * 将 普通的流转换成 IntStream
      */
     IntStream mapToInt(ToIntFunction<? super T> mapper);
 

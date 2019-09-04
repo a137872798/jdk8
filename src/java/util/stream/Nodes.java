@@ -48,6 +48,7 @@ import java.util.function.LongFunction;
  * flattening {@link Node}s.
  *
  * @since 1.8
+ * 静态工具类
  */
 final class Nodes {
 
@@ -61,8 +62,14 @@ final class Nodes {
     static final long MAX_ARRAY_SIZE = Integer.MAX_VALUE - 8;
 
     // IllegalArgumentException messages
+    /**
+     * 抛出异常时对应的提示信息
+     */
     static final String BAD_SIZE = "Stream size exceeds max array size";
 
+    /**
+     * 代表4个元素类型对应的空节点
+     */
     @SuppressWarnings("rawtypes")
     private static final Node EMPTY_NODE = new EmptyNode.OfRef();
     private static final Node.OfInt EMPTY_INT_NODE = new EmptyNode.OfInt();
@@ -77,6 +84,7 @@ final class Nodes {
      * @param <T> the type of elements of the created node
      * @param shape the shape of the node to be created
      * @return an empty node.
+     * 根据元素类型 返回对应的 EmptyNode
      */
     @SuppressWarnings("unchecked")
     static <T> Node<T> emptyNode(StreamShape shape) {
@@ -108,6 +116,7 @@ final class Nodes {
      * @return a {@code Node} covering the elements of the input nodes
      * @throws IllegalStateException if all {@link Node} elements of the list
      * are an not instance of type supported by this factory.
+     * 代表创建一个 树形节点对象 包含 left/right 节点
      */
     @SuppressWarnings("unchecked")
     static <T> Node<T> conc(StreamShape shape, Node<T> left, Node<T> right) {
@@ -162,9 +171,11 @@ final class Nodes {
      * @param generator the array factory
      * @param <T> the type of elements of the node builder
      * @return a {@code Node.Builder}
+     * 通过传入的对象 生成一个 Node 的构建器     exactSizeIfKnown 代表 明确的大小 generator 代表产生元素的函数
      */
     static <T> Node.Builder<T> builder(long exactSizeIfKnown, IntFunction<T[]> generator) {
         return (exactSizeIfKnown >= 0 && exactSizeIfKnown < MAX_ARRAY_SIZE)
+                // 返回固定长度的 NodeBuilder 对象
                ? new FixedNodeBuilder<>(exactSizeIfKnown, generator)
                : builder();
     }
@@ -554,14 +565,32 @@ final class Nodes {
 
     // Implementations
 
+    /**
+     * 空节点对象
+     * @param <T>
+     * @param <T_ARR>
+     * @param <T_CONS>
+     */
     private static abstract class EmptyNode<T, T_ARR, T_CONS> implements Node<T> {
         EmptyNode() { }
 
+        /**
+         * Node 内部已经维护了 size 信息 这里传入一个函数就是要通过该长度信息生成一个新的数组对象
+         * @param generator a factory function which takes an integer parameter and
+         *        returns a new, empty array of that size and of the appropriate
+         *        array type
+         * @return
+         */
         @Override
         public T[] asArray(IntFunction<T[]> generator) {
             return generator.apply(0);
         }
 
+        /**
+         * noop
+         * @param array
+         * @param offset
+         */
         public void copyInto(T_ARR array, int offset) { }
 
         @Override
@@ -571,6 +600,10 @@ final class Nodes {
 
         public void forEach(T_CONS consumer) { }
 
+        /**
+         * 代表是引用类型的泛型
+         * @param <T>
+         */
         private static class OfRef<T> extends EmptyNode<T, T[], Consumer<? super T>> {
             private OfRef() {
                 super();
@@ -635,18 +668,39 @@ final class Nodes {
     }
 
     /** Node class for a reference array */
+    /**
+     * 基于数组实现的 Node 对象 看来一个Node 就代表多个元素 不同于 链表中的Node 概念
+     * @param <T>
+     */
     private static class ArrayNode<T> implements Node<T> {
+        /**
+         * 内部维护的实际元素存储
+         */
         final T[] array;
+        /**
+         * 当前长度 看来父类的定义是允许扩容的 子类可以禁止扩容
+         */
         int curSize;
 
+        /**
+         * 这里根据size 属性初始化等大的容器对象但是内部还是空的 所以现在还不能build 出node
+         * @param size
+         * @param generator
+         */
         @SuppressWarnings("unchecked")
         ArrayNode(long size, IntFunction<T[]> generator) {
             if (size >= MAX_ARRAY_SIZE)
                 throw new IllegalArgumentException(BAD_SIZE);
+            // generator 是将 长度转换为 存储容器
             this.array = generator.apply((int) size);
+
             this.curSize = 0;
         }
 
+        /**
+         * 如果直接使用数组进行初始化  该对象已经完成了(可以通过Builder.build()创建 对应的Node 对象)
+         * @param array
+         */
         ArrayNode(T[] array) {
             this.array = array;
             this.curSize = array.length;
@@ -654,11 +708,20 @@ final class Nodes {
 
         // Node
 
+        /**
+         * 将array 的元素抽取出来生成迭代器 该迭代器 的拆分方法就是将元素减半 生成第二组指针
+         * @return
+         */
         @Override
         public Spliterator<T> spliterator() {
             return Arrays.spliterator(array, 0, curSize);
         }
 
+        /**
+         * 将数据 拷贝到 传入的 数组中
+         * @param dest
+         * @param destOffset
+         */
         @Override
         public void copyInto(T[] dest, int destOffset) {
             System.arraycopy(array, 0, dest, destOffset, curSize);
@@ -694,8 +757,14 @@ final class Nodes {
         }
     }
 
-    /** Node class for a Collection */
+    /** Node class for a Collection
+     *  基于 collection 实现的Node 对象
+     */
     private static final class CollectionNode<T> implements Node<T> {
+
+        /**
+         * 内部维护的容器对象
+         */
         private final Collection<T> c;
 
         CollectionNode(Collection<T> c) {
@@ -704,17 +773,34 @@ final class Nodes {
 
         // Node
 
+        /**
+         * 通过 c 对象生成对应的 可拆分迭代器
+         * @return
+         */
         @Override
         public Spliterator<T> spliterator() {
             return c.stream().spliterator();
         }
 
+        /**
+         * 将数据 拷贝到数组中
+         * @param array the array into which to copy the contents of this
+         *       {@code Node}
+         * @param offset the starting offset within the array
+         */
         @Override
         public void copyInto(T[] array, int offset) {
             for (T t : c)
                 array[offset++] = t;
         }
 
+        /**
+         * 将数据拷贝到目标数组
+         * @param generator a factory function which takes an integer parameter and
+         *        returns a new, empty array of that size and of the appropriate
+         *        array type
+         * @return
+         */
         @Override
         @SuppressWarnings("unchecked")
         public T[] asArray(IntFunction<T[]> generator) {
@@ -741,10 +827,21 @@ final class Nodes {
 
     /**
      * Node class for an internal node with two or more children
+     * 树形节点对象
      */
     private static abstract class AbstractConcNode<T, T_NODE extends Node<T>> implements Node<T> {
+
+        /**
+         * 左节点
+         */
         protected final T_NODE left;
+        /**
+         * 右节点
+         */
         protected final T_NODE right;
+        /**
+         * 每个节点的 size 属性都是 左右节点 size 的总和
+         */
         private final long size;
 
         AbstractConcNode(T_NODE left, T_NODE right) {
@@ -775,6 +872,10 @@ final class Nodes {
         }
     }
 
+    /**
+     * 代表树形结构的 Node 对象
+     * @param <T>
+     */
     static final class ConcNode<T>
             extends AbstractConcNode<T, Node<T>>
             implements Node<T> {
@@ -1190,6 +1291,7 @@ final class Nodes {
 
     /**
      * Fixed-sized builder class for reference nodes
+     * 固定长度的 Node 构建器
      */
     private static final class FixedNodeBuilder<T>
             extends ArrayNode<T>
@@ -1200,6 +1302,10 @@ final class Nodes {
             assert size < MAX_ARRAY_SIZE;
         }
 
+        /**
+         * 构建新的node 对象
+         * @return
+         */
         @Override
         public Node<T> build() {
             if (curSize < array.length)
@@ -1208,6 +1314,14 @@ final class Nodes {
             return this;
         }
 
+        /**
+         * 因为该Node 的容量是固定的 只能以array.length的大小进行初始化  curSize 应该是代表当前Node.Builder中已经填充了多少元素
+         * @param size The exact size of the data to be pushed downstream, if
+         *             known or {@code -1} if unknown or infinite.
+         *
+         *             <p>Prior to this call, the sink must be in the initial state, and after
+         *             this call it is in the active state.
+         */
         @Override
         public void begin(long size) {
             if (size != array.length)
@@ -1216,6 +1330,10 @@ final class Nodes {
             curSize = 0;
         }
 
+        /**
+         * 未填充满的情况下可以设置元素到 数组中   中途调用begin 会重置指针
+         * @param t the input argument
+         */
         @Override
         public void accept(T t) {
             if (curSize < array.length) {
@@ -1226,6 +1344,9 @@ final class Nodes {
             }
         }
 
+        /**
+         * 未填充满 不能调用end()
+         */
         @Override
         public void end() {
             if (curSize < array.length)

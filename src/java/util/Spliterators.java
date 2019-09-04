@@ -37,6 +37,7 @@ import java.util.function.LongConsumer;
  *
  * @see Spliterator
  * @since 1.8
+ * 并行迭代器 工具类
  */
 public final class Spliterators {
 
@@ -54,6 +55,7 @@ public final class Spliterators {
      *
      * @param <T> Type of elements
      * @return An empty spliterator
+     * 返回一个空的 并行迭代器
      */
     @SuppressWarnings("unchecked")
     public static <T> Spliterator<T> emptySpliterator() {
@@ -71,6 +73,7 @@ public final class Spliterators {
      * {@link java.util.Spliterator#trySplit()} always return {@code null}.
      *
      * @return An empty spliterator
+     * 返回 泛型是 Int类型的 空并行迭代器
      */
     public static Spliterator.OfInt emptyIntSpliterator() {
         return EMPTY_INT_SPLITERATOR;
@@ -87,6 +90,7 @@ public final class Spliterators {
      * {@link java.util.Spliterator#trySplit()} always return {@code null}.
      *
      * @return An empty spliterator
+     * 返回 泛型是Long的 并行迭代器
      */
     public static Spliterator.OfLong emptyLongSpliterator() {
         return EMPTY_LONG_SPLITERATOR;
@@ -136,6 +140,7 @@ public final class Spliterators {
      * @return A spliterator for an array
      * @throws NullPointerException if the given array is {@code null}
      * @see Arrays#spliterator(Object[])
+     * 使用传入的元素生成一个 并行迭代器  additionalCharacteristics 代表追加的特性
      */
     public static <T> Spliterator<T> spliterator(Object[] array,
                                                  int additionalCharacteristics) {
@@ -174,6 +179,7 @@ public final class Spliterators {
      */
     public static <T> Spliterator<T> spliterator(Object[] array, int fromIndex, int toIndex,
                                                  int additionalCharacteristics) {
+        // 判断偏移量是否合法
         checkFromToBounds(Objects.requireNonNull(array).length, fromIndex, toIndex);
         return new ArraySpliterator<>(array, fromIndex, toIndex, additionalCharacteristics);
     }
@@ -200,6 +206,7 @@ public final class Spliterators {
      * @return A spliterator for an array
      * @throws NullPointerException if the given array is {@code null}
      * @see Arrays#spliterator(int[])
+     * 生成 基于 int[] 的分裂迭代器
      */
     public static Spliterator.OfInt spliterator(int[] array,
                                                 int additionalCharacteristics) {
@@ -414,6 +421,7 @@ public final class Spliterators {
      *        are additionally reported unless {@code CONCURRENT} is supplied.
      * @return A spliterator from an iterator
      * @throws NullPointerException if the given collection is {@code null}
+     * 基于 collection 生成的分裂迭代器对象
      */
     public static <T> Spliterator<T> spliterator(Collection<? extends T> c,
                                                  int characteristics) {
@@ -501,6 +509,7 @@ public final class Spliterators {
      *        are additionally reported unless {@code CONCURRENT} is supplied.
      * @return A spliterator from an iterator
      * @throws NullPointerException if the given iterator is {@code null}
+     * 使用原始类型 迭代器进行初始化
      */
     public static Spliterator.OfInt spliterator(PrimitiveIterator.OfInt iterator,
                                                 long size,
@@ -662,9 +671,11 @@ public final class Spliterators {
      * @param spliterator The spliterator
      * @return An iterator
      * @throws NullPointerException if the given spliterator is {@code null}
+     * 将 可拆分迭代器对象 变成一个普通的迭代器对象
      */
     public static<T> Iterator<T> iterator(Spliterator<? extends T> spliterator) {
         Objects.requireNonNull(spliterator);
+        // 返回的 适配器对象可以从 split中 剥离数据并生成新的迭代器
         class Adapter implements Iterator<T>, Consumer<T> {
             boolean valueReady = false;
             T nextElement;
@@ -833,10 +844,20 @@ public final class Spliterators {
 
     // Implementations
 
+    /**
+     * 代表一个空的并行迭代器对象
+     * @param <T>
+     * @param <S>
+     * @param <C>
+     */
     private static abstract class EmptySpliterator<T, S extends Spliterator<T>, C> {
 
         EmptySpliterator() { }
 
+        /**
+         * 代表无法被拆分
+         * @return
+         */
         public S trySplit() {
             return null;
         }
@@ -846,6 +867,10 @@ public final class Spliterators {
             return false;
         }
 
+        /**
+         * 只是单纯校验 cons 不为null 因为内部没有其他元素 所以不做处理
+         * @param consumer
+         */
         public void forEachRemaining(C consumer) {
             Objects.requireNonNull(consumer);
         }
@@ -888,6 +913,7 @@ public final class Spliterators {
     /**
      * A Spliterator designed for use by sources that traverse and split
      * elements maintained in an unmodifiable {@code Object[]} array.
+     * 基于数组实现的 可拆分迭代器对象
      */
     static final class ArraySpliterator<T> implements Spliterator<T> {
         /**
@@ -898,8 +924,11 @@ public final class Spliterators {
          * which we ensure here by defining this class as final.
          */
         private final Object[] array;
+        // 该属性会在 调用 advance/split 时发生改变
         private int index;        // current index, modified on advance/split
+        // 最后一个索引
         private final int fence;  // one past last index
+        // 特性
         private final int characteristics;
 
         /**
@@ -926,17 +955,28 @@ public final class Spliterators {
             this.array = array;
             this.index = origin;
             this.fence = fence;
+            // 看来特性总是会追加 SIZED | SUBSIZED
             this.characteristics = additionalCharacteristics | Spliterator.SIZED | Spliterator.SUBSIZED;
         }
 
+        /**
+         * 将当前 spliterator 分为2半  注意使用的是同一个array  调用该方法后 原对象变成了后半部分 （指针分别指向中间和尾部）
+         * @return
+         */
         @Override
         public Spliterator<T> trySplit() {
+            // 这里获取了 中间的下标 ???
             int lo = index, mid = (lo + fence) >>> 1;
             return (lo >= mid)
                    ? null
+                    // 返回前半部分
                    : new ArraySpliterator<>(array, lo, index = mid, characteristics);
         }
 
+        /**
+         * 就是普通的迭代
+         * @param action The action
+         */
         @SuppressWarnings("unchecked")
         @Override
         public void forEachRemaining(Consumer<? super T> action) {
@@ -949,6 +989,11 @@ public final class Spliterators {
             }
         }
 
+        /**
+         * 移动下标
+         * @param action The action
+         * @return
+         */
         @Override
         public boolean tryAdvance(Consumer<? super T> action) {
             if (action == null)
@@ -971,6 +1016,7 @@ public final class Spliterators {
 
         @Override
         public Comparator<? super T> getComparator() {
+            // 如果包含 sorted 返回null ?
             if (hasCharacteristics(Spliterator.SORTED))
                 return null;
             throw new IllegalStateException();
@@ -1252,6 +1298,7 @@ public final class Spliterators {
      *
      * @see #spliterator(Iterator, long, int)
      * @since 1.8
+     * 可拆分迭代器的骨架类  内部没有存放实际元素的对象
      */
     public static abstract class AbstractSpliterator<T> implements Spliterator<T> {
         static final int BATCH_UNIT = 1 << 10;  // batch array size increment
@@ -1687,14 +1734,24 @@ public final class Spliterators {
      * A Spliterator using a given Iterator for element
      * operations. The spliterator implements {@code trySplit} to
      * permit limited parallelism.
+     * 内部基于可迭代对象的 拆分迭代器
      */
     static class IteratorSpliterator<T> implements Spliterator<T> {
+        /**
+         * 1024  代表拆分出一个 分片的最大单位
+         */
         static final int BATCH_UNIT = 1 << 10;  // batch array size increment
         static final int MAX_BATCH = 1 << 25;  // max batch array size;
         private final Collection<? extends T> collection; // null OK
         private Iterator<? extends T> it;
         private final int characteristics;
+        /**
+         * 代表元素长度
+         */
         private long est;             // size estimate
+        /**
+         * 代表上次 为了分裂已经使用了多少大小 默认为0 每次会分配至多BATCH_UNIT 的大小， 不允许超过MAX_BATCH
+         */
         private int batch;            // batch size for splits
 
         /**
@@ -1710,7 +1767,9 @@ public final class Spliterators {
         public IteratorSpliterator(Collection<? extends T> collection, int characteristics) {
             this.collection = collection;
             this.it = null;
+            // characteristics 可以设置是否是并发安全的
             this.characteristics = (characteristics & Spliterator.CONCURRENT) == 0
+                                    // 非并发安全要追加这2个属性
                                    ? characteristics | Spliterator.SIZED | Spliterator.SUBSIZED
                                    : characteristics;
         }
@@ -1724,6 +1783,7 @@ public final class Spliterators {
          * @param size the number of elements in the source
          * @param characteristics properties of this spliterator's
          * source or elements.
+         *                        当使用迭代器进行初始化时  est 信息可以自由设定 默认为 Long.Max_Value
          */
         public IteratorSpliterator(Iterator<? extends T> iterator, long size, int characteristics) {
             this.collection = null;
@@ -1746,10 +1806,15 @@ public final class Spliterators {
         public IteratorSpliterator(Iterator<? extends T> iterator, int characteristics) {
             this.collection = null;
             this.it = iterator;
+            // 默认情况下 长度为 Long.MAX_VALUE
             this.est = Long.MAX_VALUE;
             this.characteristics = characteristics & ~(Spliterator.SIZED | Spliterator.SUBSIZED);
         }
 
+        /**
+         * 将该元素进行拆分
+         * @return
+         */
         @Override
         public Spliterator<T> trySplit() {
             /*
@@ -1767,22 +1832,47 @@ public final class Spliterators {
              */
             Iterator<? extends T> i;
             long s;
+            // 2种初始化方式 一种通过容器 一种通过迭代器 如果没有设置迭代器 就从容器中 获取 同时使用的 size属性也是正常的
             if ((i = it) == null) {
                 i = it = collection.iterator();
                 s = est = (long) collection.size();
             }
             else
+                // 代表使用迭代器进行初始化的情况 这时 长度信息是自由设置的
                 s = est;
+            // 首先要求迭代器 必须还有元素
             if (s > 1 && i.hasNext()) {
+                // batch 默认是0
+                /**
+                 * 第一次n = 0 + BATCH_UNIT
+                 * 第二次 因为如果batch小于BATCH_UNIT 代表迭代器剩余元素小于 BATCH_UNIT 是过不了 i.hasNext()的 所以 n = 2*BATCH_UNIT
+                 * 假设迭代器元素非常大
+                 * 第三次 3*BATCH_UNIT    也就是每次返回的ArrayS 对象都是递增 BATCH_UNIT 的大小(元素是不重叠的)
+                 *
+                 * 这里存在一个变数 就是 上面情况s 假设是MAX_VALUE 不会限制每次分配的大小
+                 * 如果是迭代器本身的大小
+                 * 那么在条件允许的情况下 还是不断递增获取 n*BATCH_UNIT 的数量 一旦出现超过迭代器长度的大小 本次就只会分配剩余的大小 这时batch本身已经不重要了
+                 * 因为下次尝试拆分时  i.hasNext() == false 不满足条件
+                 *
+                 * 如果est 直接被设置了一个 小于迭代器大小的值 这样 est -= j 就会是一个负数 不满足 s>1的条件 但是那一次拆分的数据还是正常的
+                 * 也就是est 如果设小了 只会减少拆分次数 而具体拆分返回的元素数据还是由迭代器本身的元素数量决定的
+                 */
                 int n = batch + BATCH_UNIT;
+                // 如果超过了迭代器本身长度 设置成迭代器等长 但是该值是可控的 可以随意设置
                 if (n > s)
                     n = (int) s;
+                // 不能超过允许的 最大批数量
                 if (n > MAX_BATCH)
                     n = MAX_BATCH;
+                // 创建一个 min(BATCH_UNIT，Collection.size()) 长度的数组
                 Object[] a = new Object[n];
                 int j = 0;
+                // 将迭代器中所有数据拷贝到该数组上  2种情况 1: 迭代器大小超过Batch_unit 设置 batch_unit 的元素 2: 设置迭代器大小的元素
+                // 如果迭代器有超过1024个元素 比如2000 第一次 调用1024次next() 分配 这么多 元素 之后剩余的900多元素就会在下次通过 next() 获取
                 do { a[j] = i.next(); } while (++j < n && i.hasNext());
+                // 更新本次已分配的长度
                 batch = j;
+                // 将est 减去迭代器长度  因为总长度同时减小了 保证 est-batch 在一个合理的范围 不会超过 迭代器可提供的元素数量
                 if (est != Long.MAX_VALUE)
                     est -= j;
                 return new ArraySpliterator<>(a, 0, j, characteristics);
@@ -1827,6 +1917,10 @@ public final class Spliterators {
         @Override
         public int characteristics() { return characteristics; }
 
+        /**
+         * 该方法应该是 返回 该迭代器是使用什么 Comparator 进行排序的 如果一开始就是顺序的 就返回null
+         * @return
+         */
         @Override
         public Comparator<? super T> getComparator() {
             if (hasCharacteristics(Spliterator.SORTED))
@@ -1839,6 +1933,7 @@ public final class Spliterators {
      * A Spliterator.OfInt using a given IntStream.IntIterator for element
      * operations. The spliterator implements {@code trySplit} to
      * permit limited parallelism.
+     * 基于int类型的 可拆分迭代器
      */
     static final class IntIteratorSpliterator implements Spliterator.OfInt {
         static final int BATCH_UNIT = IteratorSpliterator.BATCH_UNIT;
