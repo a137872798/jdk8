@@ -205,7 +205,7 @@ abstract class PipelineHelper<P_OUT> {
      *        shape of the computation tree.
      * @param generator a factory function for array instances
      * @return the {@code Node} containing all output elements
-     * 将结果生成一个 Node
+     * 将结果生成一个 Node  该node对象内可以存储很多元素
      */
     abstract<P_IN> Node<P_OUT> evaluate(Spliterator<P_IN> spliterator,
                                         boolean flatten,

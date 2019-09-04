@@ -144,6 +144,7 @@ final class Nodes {
      * @param <T> the type of elements held by the node
      * @param array the array
      * @return a node holding an array
+     * 使用数组对象来初始化一个节点
      */
     static <T> Node<T> node(T[] array) {
         return new ArrayNode<>(array);
@@ -177,6 +178,7 @@ final class Nodes {
         return (exactSizeIfKnown >= 0 && exactSizeIfKnown < MAX_ARRAY_SIZE)
                 // 返回固定长度的 NodeBuilder 对象
                ? new FixedNodeBuilder<>(exactSizeIfKnown, generator)
+                // 返回一个特殊的 Builder对象
                : builder();
     }
 
@@ -840,7 +842,7 @@ final class Nodes {
          */
         protected final T_NODE right;
         /**
-         * 每个节点的 size 属性都是 左右节点 size 的总和
+         * size 初始值 是 left + right  可能之后会变化
          */
         private final long size;
 
@@ -880,21 +882,37 @@ final class Nodes {
             extends AbstractConcNode<T, Node<T>>
             implements Node<T> {
 
+        /**
+         * 使用左节点和右节点进行初始化
+         * @param left
+         * @param right
+         */
         ConcNode(Node<T> left, Node<T> right) {
             super(left, right);
         }
 
+        /**
+         * 返回对应的迭代器对象  同时将本节点作为起点
+         * @return
+         */
         @Override
         public Spliterator<T> spliterator() {
             return new Nodes.InternalNodeSpliterator.OfRef<>(this);
         }
 
+        /**
+         * offset 代表期望从 array 对象的 哪个下标开始存入数据
+         * @param array the array into which to copy the contents of this
+         *       {@code Node}
+         * @param offset the starting offset within the array
+         */
         @Override
         public void copyInto(T[] array, int offset) {
             Objects.requireNonNull(array);
             left.copyInto(array, offset);
             // Cast to int is safe since it is the callers responsibility to
             // ensure that there is sufficient room in the array
+            // right 接着上次存入的数据 继续存
             right.copyInto(array, offset + (int) left.count());
         }
 
@@ -920,10 +938,13 @@ final class Nodes {
                 return this;
             long leftCount = left.count();
             if (from >= leftCount)
+                // 代表截取右边部分数据
                 return right.truncate(from - leftCount, to - leftCount, generator);
             else if (to <= leftCount)
+                // 截取部分左边
                 return left.truncate(from, to, generator);
             else {
+                // 代表左右都要截取 之后 再整合
                 return Nodes.conc(getShape(), left.truncate(from, leftCount, generator),
                                   right.truncate(0, to - leftCount, generator));
             }
@@ -1025,30 +1046,55 @@ final class Nodes {
     }
 
     /** Abstract class for spliterator for all internal node classes */
+    /**
+     * 节点 拆分迭代器实现类
+     * @param <T>
+     * @param <S>
+     * @param <N>
+     */
     private static abstract class InternalNodeSpliterator<T,
                                                           S extends Spliterator<T>,
                                                           N extends Node<T>>
             implements Spliterator<T> {
         // Node we are pointing to
         // null if full traversal has occurred
+        /**
+         * 当前指向的节点对象
+         */
         N curNode;
 
         // next child of curNode to consume
+        /**
+         * 标明了下个会被处理的 子节点的下标
+         */
         int curChildIndex;
 
         // The spliterator of the curNode if that node is last and has no children.
         // This spliterator will be delegated to for splitting and traversing.
         // null if curNode has children
+        /**
+         * 如果当前节点没有 child 才会存在 如果有 child 就不会存在 迭代器对象
+         */
         S lastNodeSpliterator;
 
         // spliterator used while traversing with tryAdvance
         // null if no partial traversal has occurred
+        /**
+         * 当调用 tryAdvance 时 就是通过该对象获取下个元素
+         */
         S tryAdvanceSpliterator;
 
         // node stack used when traversing to search and find leaf nodes
         // null if no partial traversal has occurred
+        /**
+         * 遍历当前节点的子节点 并生成一个 队列对象
+         */
         Deque<N> tryAdvanceStack;
 
+        /**
+         * 使用单个节点对象进行初始化
+         * @param curNode
+         */
         InternalNodeSpliterator(N curNode) {
             this.curNode = curNode;
         }
@@ -1056,12 +1102,14 @@ final class Nodes {
         /**
          * Initiate a stack containing, in left-to-right order, the child nodes
          * covered by this spliterator
+         * 初始化栈对象
          */
         @SuppressWarnings("unchecked")
         protected final Deque<N> initStack() {
             // Bias size to the case where leaf nodes are close to this node
             // 8 is the minimum initial capacity for the ArrayDeque implementation
             Deque<N> stack = new ArrayDeque<>(8);
+            // 当前只看到 二叉树实现 就当作 childCount 返回就是2   这样stack 只会填充2个元素
             for (int i = curNode.getChildCount() - 1; i >= curChildIndex; i--)
                 stack.addFirst((N) curNode.getChild(i));
             return stack;
@@ -1070,16 +1118,20 @@ final class Nodes {
         /**
          * Depth first search, in left-to-right order, of the node tree, using
          * an explicit stack, to find the next non-empty leaf node.
+         * 深度优先 从左往右
          */
         @SuppressWarnings("unchecked")
         protected final N findNextLeafNode(Deque<N> stack) {
             N n = null;
             while ((n = stack.pollFirst()) != null) {
+                // 代表没有子元素了
                 if (n.getChildCount() == 0) {
+                    // 代表本节点包含元素
                     if (n.count() > 0)
                         return n;
                 } else {
                     for (int i = n.getChildCount() - 1; i >= 0; i--)
+                        // 将每个元素移动到最前面???
                         stack.addFirst((N) n.getChild(i));
                 }
             }
@@ -1087,6 +1139,10 @@ final class Nodes {
             return null;
         }
 
+        /**
+         * 初始化一个 可以向前移动的迭代器
+         * @return
+         */
         @SuppressWarnings("unchecked")
         protected final boolean initTryAdvance() {
             if (curNode == null)
@@ -1095,7 +1151,9 @@ final class Nodes {
             if (tryAdvanceSpliterator == null) {
                 if (lastNodeSpliterator == null) {
                     // Initiate the node stack
+                    // 初始化最基础的 stack对象
                     tryAdvanceStack = initStack();
+                    // 将子节点追加到 栈结构中 并返回最前头的节点
                     N leaf = findNextLeafNode(tryAdvanceStack);
                     if (leaf != null)
                         tryAdvanceSpliterator = (S) leaf.spliterator();
@@ -1112,6 +1170,10 @@ final class Nodes {
             return true;
         }
 
+        /**
+         * 生成迭代器对象
+         * @return
+         */
         @Override
         @SuppressWarnings("unchecked")
         public final S trySplit() {
@@ -1134,6 +1196,10 @@ final class Nodes {
             }
         }
 
+        /**
+         * 评估大小
+         * @return
+         */
         @Override
         public final long estimateSize() {
             if (curNode == null)
@@ -1163,13 +1229,20 @@ final class Nodes {
                 super(curNode);
             }
 
+            /**
+             * 尝试获取下个元素
+             * @param consumer
+             * @return
+             */
             @Override
             public boolean tryAdvance(Consumer<? super T> consumer) {
+                // 如果构建 stack 结构失败 无法获取下个元素
                 if (!initTryAdvance())
                     return false;
 
                 boolean hasNext = tryAdvanceSpliterator.tryAdvance(consumer);
                 if (!hasNext) {
+                    // 如果尾部的迭代器还没有初始化  lastNodeSpliterator 和 tryAdvanceSpliterator 是什么关系
                     if (lastNodeSpliterator == null) {
                         // Advance to the spliterator of the next non-empty leaf node
                         Node<T> leaf = findNextLeafNode(tryAdvanceStack);

@@ -52,6 +52,7 @@ import java.util.function.LongConsumer;
  *
  * @param <E> the type of elements in this list
  * @since 1.8
+ * 只能添加 不能删除的 缓冲区???
  */
 class SpinedBuffer<E>
         extends AbstractSpinedBuffer
@@ -77,11 +78,13 @@ class SpinedBuffer<E>
     /**
      * Chunk that we're currently writing into; may or may not be aliased with
      * the first element of the spine.
+     * 代表当前写入的数组
      */
     protected E[] curChunk;
 
     /**
      * All chunks, or null if there is only one chunk.
+     * 代表 二维数组 每个元素又是一个 chunk  每个 chunk 又有多个元素
      */
     protected E[][] spine;
 
@@ -91,10 +94,12 @@ class SpinedBuffer<E>
      * @param  initialCapacity  the initial capacity of the list
      * @throws IllegalArgumentException if the specified initial capacity
      *         is negative
+     *         使用指定长度进行初始化
      */
     @SuppressWarnings("unchecked")
     SpinedBuffer(int initialCapacity) {
         super(initialCapacity);
+        // 创建等量的 chunk 数组对象 然后数据应该是往每个 chunk 中填入
         curChunk = (E[]) new Object[1 << initialChunkPower];
     }
 
@@ -109,6 +114,7 @@ class SpinedBuffer<E>
 
     /**
      * Returns the current capacity of the buffer
+     * spine 应该是 二级 数组的下标
      */
     protected long capacity() {
         return (spineIndex == 0)
@@ -116,17 +122,24 @@ class SpinedBuffer<E>
                : priorElementCount[spineIndex] + spine[spineIndex].length;
     }
 
+    /**
+     * 脊椎膨胀 ???
+     */
     @SuppressWarnings("unchecked")
     private void inflateSpine() {
         if (spine == null) {
+            // 当二维数组还没有初始化时  默认 存在8个二级数组
             spine = (E[][]) new Object[MIN_SPINE_SIZE][];
+            // 优先数组 大小也为8
             priorElementCount = new long[MIN_SPINE_SIZE];
+            // 一开始 就将第一个 spine 指向 当前数组
             spine[0] = curChunk;
         }
     }
 
     /**
      * Ensure that the buffer has at least capacity to hold the target size
+     * 判断是否有足够的 容量
      */
     @SuppressWarnings("unchecked")
     protected final void ensureCapacity(long targetSize) {

@@ -41,6 +41,7 @@ import java.util.Spliterator;
  * @param <E_IN> the type of input elements
  * @param <R>    the type of the result
  * @since 1.8
+ * 代表一个终止操作
  */
 interface TerminalOp<E_IN, R> {
     /**
@@ -49,6 +50,7 @@ interface TerminalOp<E_IN, R> {
      * @implSpec The default returns {@code StreamShape.REFERENCE}.
      *
      * @return StreamShape of the input type of this operation
+     * 获取 Stream 的 形状 是一个枚举变量
      */
     default StreamShape inputShape() { return StreamShape.REFERENCE; }
 
@@ -62,6 +64,7 @@ interface TerminalOp<E_IN, R> {
      *
      * @return the stream flags for this operation
      * @see StreamOpFlag
+     * 获取流的 一些 特殊属性 比如是否并行之类的
      */
     default int getOpFlags() { return 0; }
 
@@ -76,9 +79,12 @@ interface TerminalOp<E_IN, R> {
      * @param helper the pipeline helper
      * @param spliterator the source spliterator
      * @return the result of the evaluation
+     * 使用并行计算 传入了一个 Sliter迭代器对象 因为 该迭代器 具备 分裂功能 所以适合并行吧
      */
     default <P_IN> R evaluateParallel(PipelineHelper<E_IN> helper,
                                       Spliterator<P_IN> spliterator) {
+
+        // 打印日志 忽略
         if (Tripwire.ENABLED)
             Tripwire.trip(getClass(), "{0} triggering TerminalOp.evaluateParallel serial default");
         return evaluateSequential(helper, spliterator);
@@ -92,6 +98,7 @@ interface TerminalOp<E_IN, R> {
      * @param helper the pipeline helper
      * @param spliterator the source spliterator
      * @return the result of the evaluation
+     * 顺序执行
      */
     <P_IN> R evaluateSequential(PipelineHelper<E_IN> helper,
                                 Spliterator<P_IN> spliterator);

@@ -841,6 +841,7 @@ final class Streams {
      * Given two Runnables, return a Runnable that executes both in sequence,
      * even if the first throws an exception, and if both throw exceptions, add
      * any exceptions thrown by the second as suppressed exceptions of the first.
+     * 将2个 runnable 组合成1个
      */
     static Runnable composeWithExceptions(Runnable a, Runnable b) {
         return new Runnable() {
