@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *        result type
  * @param <K> type of child and sibling tasks
  * @since 1.8
+ * 可短路
  */
 @SuppressWarnings("serial")
 abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
@@ -46,6 +47,7 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
     /**
      * The result for this computation; this is shared among all tasks and set
      * exactly once
+     * 只能设置一次 且全局共享???
      */
     protected final AtomicReference<R> sharedResult;
 
@@ -54,6 +56,7 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
      * tasks in the computation under various conditions, such as in a
      * find-first operation, a task that finds a value will cancel all tasks
      * that are later in the encounter order.
+     * 判断是否被关闭
      */
     protected volatile boolean canceled;
 
@@ -90,12 +93,14 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
      * this might be null or an empty {@code Optional}.
      *
      * @return the result to return when no task finds a result
+     * 获取一个空的结果对象
      */
     protected abstract R getEmptyResult();
 
     /**
      * Overrides AbstractTask version to include checks for early
      * exits while splitting or computing.
+     * 计算结果 增加 是否可以提早退出的判断
      */
     @Override
     public void compute() {
@@ -104,13 +109,18 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
         long sizeThreshold = getTargetSize(sizeEstimate);
         boolean forkRight = false;
         @SuppressWarnings("unchecked") K task = (K) this;
+
+        // 以上跟父类方法相同
         AtomicReference<R> sr = sharedResult;
         R result;
+        // 进入循环体条件是  当前还没有设置结果
         while ((result = sr.get()) == null) {
+            // 判断任务是否已经关闭  只要有一个节点是被关闭的 就不进行计算 推测 关闭具备传递性
             if (task.taskCanceled()) {
                 result = task.getEmptyResult();
                 break;
             }
+            // 前半部分啥意思???   trySplit == null 也就代表不能在拆分元素了
             if (sizeEstimate <= sizeThreshold || (ls = rs.trySplit()) == null) {
                 result = task.doLeaf();
                 break;
@@ -118,6 +128,7 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
             K leftChild, rightChild, taskToFork;
             task.leftChild  = leftChild = task.makeChild(ls);
             task.rightChild = rightChild = task.makeChild(rs);
+            // 为什么要设置成1...
             task.setPendingCount(1);
             if (forkRight) {
                 forkRight = false;
@@ -146,6 +157,7 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
      * the computation to terminate early.
      *
      * @param result the result found
+     *               设置某个共享结果 使得该 task 被短路
      */
     protected void shortCircuit(R result) {
         if (result != null)
@@ -157,9 +169,11 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
      * shared result instead (if not already set).
      *
      * @param localResult The result to set for this task
+     *                    设置本地结果???
      */
     @Override
     protected void setLocalResult(R localResult) {
+        // 如果是根节点 设置 sharedResult
         if (isRoot()) {
             if (localResult != null)
                 sharedResult.compareAndSet(null, localResult);
@@ -170,6 +184,7 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
 
     /**
      * Retrieves the local result for this task
+     * 获取本地结果
      */
     @Override
     public R getRawResult() {
@@ -179,6 +194,7 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
     /**
      * Retrieves the local result for this task.  If this task is the root,
      * retrieves the shared result instead.
+     * 如果是 Root 节点 调用 LocalResult 会返回 sharedResult
      */
     @Override
     public R getLocalResult() {
@@ -202,10 +218,12 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
      * it or any of its parents have been canceled.
      *
      * @return {@code true} if this task or any parent is canceled.
+     * 判断任务是否已经关闭
      */
     protected boolean taskCanceled() {
         boolean cancel = canceled;
         if (!cancel) {
+            // 只要由一个 节点的canceled 是true 就代表被关闭
             for (K parent = getParent(); !cancel && parent != null; parent = parent.getParent())
                 cancel = parent.canceled;
         }
@@ -217,6 +235,7 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
      * Cancels all tasks which succeed this one in the encounter order.  This
      * includes canceling all the current task's right sibling, as well as the
      * later right siblings of all its parents.
+     * 该方法应该是针对 最左节点调用的??? 因为它的关闭逻辑都是基于 当前节点是
      */
     protected void cancelLaterNodes() {
         // Go up the tree, cancel right siblings of this node and all parents
@@ -224,6 +243,7 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
              parent != null;
              node = parent, parent = parent.getParent()) {
             // If node is a left child of parent, then has a right sibling
+            // 如果左节点是自身 关闭右节点
             if (parent.leftChild == node) {
                 K rightSibling = parent.rightChild;
                 if (!rightSibling.canceled)

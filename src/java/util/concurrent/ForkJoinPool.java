@@ -3431,6 +3431,7 @@ public class ForkJoinPool extends AbstractExecutorService {
             else // use security-managed default
                 factory = new InnocuousForkJoinWorkerThreadFactory();
         }
+        // 默认情况下 parallelism = Runtime.getRuntime().availableProcessors() - 1
         if (parallelism < 0 && // default 1 less than #cores
             (parallelism = Runtime.getRuntime().availableProcessors() - 1) <= 0)
             parallelism = 1;

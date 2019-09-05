@@ -100,6 +100,7 @@ import java.util.function.ToLongFunction;
  * }</pre>
  *
  * @since 1.8
+ * Collector的 工具类 内部维护了一些 Collector 的实现类
  */
 public final class Collectors {
 
@@ -128,11 +129,18 @@ public final class Collectors {
      *
      * @param <T> the type of input arguments to the merge function
      * @return a merge function which always throw {@code IllegalStateException}
+     * BinaryOperator 的 3种参数都是同一类型 这里 传入2种参数 后 抛出异常
      */
     private static <T> BinaryOperator<T> throwingMerger() {
         return (u,v) -> { throw new IllegalStateException(String.format("Duplicate key %s", u)); };
     }
 
+    /**
+     * 转换传入的参数类型
+     * @param <I>
+     * @param <R>
+     * @return
+     */
     @SuppressWarnings("unchecked")
     private static <I, R> Function<I, R> castingIdentity() {
         return i -> (R) i;
@@ -143,11 +151,24 @@ public final class Collectors {
      *
      * @param <T> the type of elements to be collected
      * @param <R> the type of the result
+     *           默认实现
      */
     static class CollectorImpl<T, A, R> implements Collector<T, A, R> {
+        /**
+         * 元素生成函数
+         */
         private final Supplier<A> supplier;
+        /**
+         * 累加器  该函数是在 往容器中添加新元素时触发
+         */
         private final BiConsumer<A, T> accumulator;
+        /**
+         * 将 2个同类型元素 结合生成 第三个元素(同类型)  应该是针对 冲突的情况 使用的函数
+         */
         private final BinaryOperator<A> combiner;
+        /**
+         * 产生结果的函数???
+         */
         private final Function<A, R> finisher;
         private final Set<Characteristics> characteristics;
 
@@ -167,6 +188,7 @@ public final class Collectors {
                       BiConsumer<A, T> accumulator,
                       BinaryOperator<A> combiner,
                       Set<Characteristics> characteristics) {
+            // 默认使用的 finisher 就是进行强转
             this(supplier, accumulator, combiner, castingIdentity(), characteristics);
         }
 
@@ -210,6 +232,9 @@ public final class Collectors {
      */
     public static <T, C extends Collection<T>>
     Collector<T, ?, C> toCollection(Supplier<C> collectionFactory) {
+        // Collection::add 是默认的添加器 就是将新的元素添加到容器中
+        // 使用 Collection<T>::add 这种写法 本身就是 隐藏了一个参数 (this)， 所以下面真正的样子应该是 (this, needAdd) -> {this.add(needAdd)}
+        // 默认没有设置 finisher 函数
         return new CollectorImpl<>(collectionFactory, Collection<T>::add,
                                    (r1, r2) -> { r1.addAll(r2); return r1; },
                                    CH_ID);
@@ -224,9 +249,11 @@ public final class Collectors {
      * @param <T> the type of the input elements
      * @return a {@code Collector} which collects all the input elements into a
      * {@code List}, in encounter order
+     * 构建 将元素类型变成 List
      */
     public static <T>
     Collector<T, ?, List<T>> toList() {
+        // 看来supplier 应该是 初始化 容器对象的  accumulate 代表当新的元素要添加到容器时    combiner 代表2个容器结合
         return new CollectorImpl<>((Supplier<List<T>>) ArrayList::new, List::add,
                                    (left, right) -> { left.addAll(right); return left; },
                                    CH_ID);
@@ -245,6 +272,7 @@ public final class Collectors {
      * @param <T> the type of the input elements
      * @return a {@code Collector} which collects all the input elements into a
      * {@code Set}
+     * 同上 只是核心函数被替换了  stream 通过传入 CollectorImpl 对象 来构建对应的对象 也就是方法的流程是在 那个对象中规定的
      */
     public static <T>
     Collector<T, ?, Set<T>> toSet() {
@@ -259,11 +287,13 @@ public final class Collectors {
      *
      * @return a {@code Collector} that concatenates the input elements into a
      * {@code String}, in encounter order
+     * 该 collector 一个 String 的容器对象
      */
     public static Collector<CharSequence, ?, String> joining() {
         return new CollectorImpl<CharSequence, StringBuilder, String>(
                 StringBuilder::new, StringBuilder::append,
                 (r1, r2) -> { r1.append(r2); return r1; },
+                // 这里输入的 finisher  也就是将 结果输出
                 StringBuilder::toString, CH_NOID);
     }
 
@@ -291,6 +321,7 @@ public final class Collectors {
      *                of the joined result
      * @return A {@code Collector} which concatenates CharSequence elements,
      * separated by the specified delimiter, in encounter order
+     * 这里使用了 StringJoiner 应该是 在指定位置进行拼接 不细看
      */
     public static Collector<CharSequence, ?, String> joining(CharSequence delimiter,
                                                              CharSequence prefix,
@@ -311,7 +342,8 @@ public final class Collectors {
      * @param <M> type of the map
      * @param mergeFunction A merge function suitable for
      * {@link Map#merge(Object, Object, BiFunction) Map.merge()}
-     * @return a merge function for two maps
+     * @return a merge function for two maps、
+     * 返回 一个 整合2个 容器的 函数对象
      */
     private static <K, V, M extends Map<K,V>>
     BinaryOperator<M> mapMerger(BinaryOperator<V> mergeFunction) {
@@ -346,12 +378,17 @@ public final class Collectors {
      * @param downstream a collector which will accept mapped values
      * @return a collector which applies the mapping function to the input
      * elements and provides the mapped results to the downstream collector
+     * mapper 代表针对输入 元素的 处理函数独享 downStream 代表会接收生成元素的下游对象
+     * 可以理解为 生成的 CollectorImpl 对象 本身的函数都是 下游函数 只是在元素进入时多了一步 mapper
      */
     public static <T, U, A, R>
     Collector<T, ?, R> mapping(Function<? super T, ? extends U> mapper,
                                Collector<? super U, A, R> downstream) {
+        // 下游的累加器
         BiConsumer<A, ? super U> downstreamAccumulator = downstream.accumulator();
+        // supplier 生成下游容器
         return new CollectorImpl<>(downstream.supplier(),
+                                   // 新元素 t 传入时 先触发 mapper 之后 使用下游的 累加器去处理对象 r 应该是指代下游容器
                                    (r, t) -> downstreamAccumulator.accept(r, mapper.apply(t)),
                                    downstream.combiner(), downstream.finisher(),
                                    downstream.characteristics());
@@ -374,14 +411,19 @@ public final class Collectors {
      * @param finisher a function to be applied to the final result of the downstream collector
      * @return a collector which performs the action of the downstream collector,
      * followed by an additional finishing step
+     * finisher 就是在原有 downstream上 追加一个 结束流程
      */
     public static<T,A,R,RR> Collector<T,A,RR> collectingAndThen(Collector<T,A,R> downstream,
                                                                 Function<R,RR> finisher) {
+        // 获取下游的 特征信息
         Set<Collector.Characteristics> characteristics = downstream.characteristics();
+        // 代表没设置 终止函数吧
         if (characteristics.contains(Collector.Characteristics.IDENTITY_FINISH)) {
             if (characteristics.size() == 1)
+                // 因为现在设置了 finisher 所以 特性要去掉 IDF
                 characteristics = Collectors.CH_NOID;
             else {
+                // 移除掉 IDF 特性
                 characteristics = EnumSet.copyOf(characteristics);
                 characteristics.remove(Collector.Characteristics.IDENTITY_FINISH);
                 characteristics = Collections.unmodifiableSet(characteristics);
@@ -407,9 +449,11 @@ public final class Collectors {
      *
      * @param <T> the type of the input elements
      * @return a {@code Collector} that counts the input elements
+     * 计数函数
      */
     public static <T> Collector<T, ?, Long>
     counting() {
+        // 每个进来的元素 看作是 1 然后初始值是0  累加函数是求和
         return reducing(0L, e -> 1L, Long::sum);
     }
 
@@ -429,6 +473,7 @@ public final class Collectors {
      */
     public static <T> Collector<T, ?, Optional<T>>
     minBy(Comparator<? super T> comparator) {
+        // BinaryOperator.minBy(comparator) 返回更小的值
         return reducing(BinaryOperator.minBy(comparator));
     }
 
@@ -448,6 +493,7 @@ public final class Collectors {
      */
     public static <T> Collector<T, ?, Optional<T>>
     maxBy(Comparator<? super T> comparator) {
+        // 返回更大的值
         return reducing(BinaryOperator.maxBy(comparator));
     }
 
@@ -459,13 +505,18 @@ public final class Collectors {
      * @param <T> the type of the input elements
      * @param mapper a function extracting the property to be summed
      * @return a {@code Collector} that produces the sum of a derived property
+     * ToIntFunction 代表将一个 参数转换成int 类型
      */
     public static <T> Collector<T, ?, Integer>
     summingInt(ToIntFunction<? super T> mapper) {
         return new CollectorImpl<>(
+                // 生成包含一个 元素的数组
                 () -> new int[1],
+                // 将入参 通过 函数 转换为 int 类型并追加到 数组中
                 (a, t) -> { a[0] += mapper.applyAsInt(t); },
+                // 2个数组的首元素相加
                 (a, b) -> { a[0] += b[0]; return a; },
+                // finisher 就是返回 数组首元素
                 a -> a[0], CH_NOID);
     }
 
@@ -477,6 +528,7 @@ public final class Collectors {
      * @param <T> the type of the input elements
      * @param mapper a function extracting the property to be summed
      * @return a {@code Collector} that produces the sum of a derived property
+     * 同上
      */
     public static <T> Collector<T, ?, Long>
     summingLong(ToLongFunction<? super T> mapper) {
@@ -502,6 +554,7 @@ public final class Collectors {
      * @param <T> the type of the input elements
      * @param mapper a function extracting the property to be summed
      * @return a {@code Collector} that produces the sum of a derived property
+     * 先不看
      */
     public static <T> Collector<T, ?, Double>
     summingDouble(ToDoubleFunction<? super T> mapper) {
@@ -656,7 +709,9 @@ public final class Collectors {
     public static <T> Collector<T, ?, T>
     reducing(T identity, BinaryOperator<T> op) {
         return new CollectorImpl<>(
+                //将普通对象 修饰成 数组对象 使得符合 Collector 的语义
                 boxSupplier(identity),
+                // 当添加一个新元素时 将该元素与旧元素 一同处理后 重新设置
                 (a, t) -> { a[0] = op.apply(a[0], t); },
                 (a, b) -> { a[0] = op.apply(a[0], b[0]); return a; },
                 a -> a[0],
@@ -693,6 +748,7 @@ public final class Collectors {
      *
      * @see #reducing(Object, BinaryOperator)
      * @see #reducing(Object, Function, BinaryOperator)
+     * 只是用一个 op 对象 进行初始化
      */
     public static <T> Collector<T, ?, Optional<T>>
     reducing(BinaryOperator<T> op) {
@@ -713,6 +769,7 @@ public final class Collectors {
         }
 
         return new CollectorImpl<T, OptionalBox, Optional<T>>(
+                // 代表默认值为null  首次添加元素 会设置 value 之后就是在 value的基础上 运用某个函数 并更新结果
                 OptionalBox::new, OptionalBox::accept,
                 (a, b) -> { if (b.present) a.accept(b.value); return a; },
                 a -> Optional.ofNullable(a.value), CH_NOID);
@@ -802,6 +859,7 @@ public final class Collectors {
      */
     public static <T, K> Collector<T, ?, Map<K, List<T>>>
     groupingBy(Function<? super T, ? extends K> classifier) {
+        // toList 返回一个 基于list 相关函数的 Collector   Function 代表将 T -> K
         return groupingBy(classifier, toList());
     }
 
@@ -896,22 +954,33 @@ public final class Collectors {
      * @see #groupingBy(Function, Collector)
      * @see #groupingBy(Function)
      * @see #groupingByConcurrent(Function, Supplier, Collector)
+     * groupingBy 好像是按照Map 进行分组???
      */
     public static <T, K, D, A, M extends Map<K, D>>
     Collector<T, ?, M> groupingBy(Function<? super T, ? extends K> classifier,
                                   Supplier<M> mapFactory,
                                   Collector<? super T, A, D> downstream) {
+        // 下游容器的 提供者
         Supplier<A> downstreamSupplier = downstream.supplier();
+        // 下游的累加器
         BiConsumer<A, ? super T> downstreamAccumulator = downstream.accumulator();
+        // 生成新的累加器  m代表容器本身 t代表新增的元素
         BiConsumer<Map<K, A>, T> accumulator = (m, t) -> {
+            // 新增的元素 要通过 Function 转换成 key 对象
             K key = Objects.requireNonNull(classifier.apply(t), "element cannot be mapped to a null key");
+            // Map 的 Value 就是下游容器对象  看来是 Map<Key, Collection<?>>
             A container = m.computeIfAbsent(key, k -> downstreamSupplier.get());
+            // 将 下游的 Colleciton 看作新的容器对象并加新增的元素 添加进去
             downstreamAccumulator.accept(container, t);
         };
+        // combiner 起作用的时候就是 k 冲突时 value 是如何整合的  针对 使用List相关函数的 Collection Key 冲突时 就是将新的元素填充到list 中
         BinaryOperator<Map<K, A>> merger = Collectors.<K, A, Map<K, A>>mapMerger(downstream.combiner());
+
+        // 代表上游对象的 容器生成函数
         @SuppressWarnings("unchecked")
         Supplier<Map<K, A>> mangledFactory = (Supplier<Map<K, A>>) mapFactory;
 
+        // 如果下游包含IDF 特性 将其他特性 去掉  可能因为 存在上游 使得下游的顺序 之类的变得不确定
         if (downstream.characteristics().contains(Collector.Characteristics.IDENTITY_FINISH)) {
             return new CollectorImpl<>(mangledFactory, accumulator, merger, CH_ID);
         }
@@ -919,11 +988,14 @@ public final class Collectors {
             @SuppressWarnings("unchecked")
             Function<A, A> downstreamFinisher = (Function<A, A>) downstream.finisher();
             Function<Map<K, A>, M> finisher = intermediate -> {
+                // 意味着 将 v 通过 finisher 处理后重新设置到 v 中  该map的 finisher 相当于是一个桥梁 确保下游的 finisher 能起作用
                 intermediate.replaceAll((k, v) -> downstreamFinisher.apply(v));
                 @SuppressWarnings("unchecked")
                 M castResult = (M) intermediate;
                 return castResult;
             };
+            // CH_NOID 代表所有特性都不能保证  为什么 CONCURRENT  和 OREDR 特性会消失 ???  可能是因为原来的List 可能是一个线程安全对象
+            // 此时使用了Map 作为它的上游 那么这时任何并发操作都不能保证同步 原先List 的顺序 可能也会打乱
             return new CollectorImpl<>(mangledFactory, accumulator, merger, finisher, CH_NOID);
         }
     }
@@ -960,6 +1032,7 @@ public final class Collectors {
      * @see #groupingBy(Function)
      * @see #groupingByConcurrent(Function, Collector)
      * @see #groupingByConcurrent(Function, Supplier, Collector)
+     * 生成具备并发特性的 分组对象
      */
     public static <T, K>
     Collector<T, ?, ConcurrentMap<K, List<T>>>
@@ -1047,6 +1120,7 @@ public final class Collectors {
      * @see #groupingByConcurrent(Function)
      * @see #groupingByConcurrent(Function, Collector)
      * @see #groupingBy(Function, Supplier, Collector)
+     * 生成并发容器
      */
     public static <T, K, A, D, M extends ConcurrentMap<K, D>>
     Collector<T, ?, M> groupingByConcurrent(Function<? super T, ? extends K> classifier,
@@ -1058,6 +1132,7 @@ public final class Collectors {
         @SuppressWarnings("unchecked")
         Supplier<ConcurrentMap<K, A>> mangledFactory = (Supplier<ConcurrentMap<K, A>>) mapFactory;
         BiConsumer<ConcurrentMap<K, A>, T> accumulator;
+        // 如果下游 包含并发特性  groupingBy 是不要求并发特性的
         if (downstream.characteristics().contains(Collector.Characteristics.CONCURRENT)) {
             accumulator = (m, t) -> {
                 K key = Objects.requireNonNull(classifier.apply(t), "element cannot be mapped to a null key");
@@ -1066,6 +1141,7 @@ public final class Collectors {
             };
         }
         else {
+            // 为下游 对象 添加内置锁 保证线程安全
             accumulator = (m, t) -> {
                 K key = Objects.requireNonNull(classifier.apply(t), "element cannot be mapped to a null key");
                 A resultContainer = m.computeIfAbsent(key, k -> downstreamSupplier.get());
@@ -1075,6 +1151,7 @@ public final class Collectors {
             };
         }
 
+        // 生成 CONCURRENT,NO_ORDER 特性
         if (downstream.characteristics().contains(Collector.Characteristics.IDENTITY_FINISH)) {
             return new CollectorImpl<>(mangledFactory, accumulator, merger, CH_CONCURRENT_ID);
         }
@@ -1104,6 +1181,7 @@ public final class Collectors {
      * @return a {@code Collector} implementing the partitioning operation
      *
      * @see #partitioningBy(Predicate, Collector)
+     * 分裂函数  默认使用基于 List函数的 Collector
      */
     public static <T>
     Collector<T, ?, Map<Boolean, List<T>>> partitioningBy(Predicate<? super T> predicate) {
@@ -1134,13 +1212,18 @@ public final class Collectors {
     public static <T, D, A>
     Collector<T, ?, Map<Boolean, D>> partitioningBy(Predicate<? super T> predicate,
                                                     Collector<? super T, A, D> downstream) {
+        // 获取下游的 累加器
         BiConsumer<A, ? super T> downstreamAccumulator = downstream.accumulator();
+        // 指定了 result 为 Partition 对象
         BiConsumer<Partition<A>, T> accumulator = (result, t) ->
+                // 通过谓语条件判断 新元素 属于哪个分组 如果是true 将 true下 对应的数据 与 本次新数据进行累加  可能result是 List类型 就会调用 list.add 将元素添加到列表中...
                 downstreamAccumulator.accept(predicate.test(t) ? result.forTrue : result.forFalse, t);
+        // 获取下游的结合器
         BinaryOperator<A> op = downstream.combiner();
         BinaryOperator<Partition<A>> merger = (left, right) ->
                 new Partition<>(op.apply(left.forTrue, right.forTrue),
                                 op.apply(left.forFalse, right.forFalse));
+        // 下游 提供者
         Supplier<Partition<A>> supplier = () ->
                 new Partition<>(downstream.supplier().get(),
                                 downstream.supplier().get());
@@ -1205,6 +1288,7 @@ public final class Collectors {
      * @see #toMap(Function, Function, BinaryOperator)
      * @see #toMap(Function, Function, BinaryOperator, Supplier)
      * @see #toConcurrentMap(Function, Function)
+     * 传入一个生成 key 一个生成value 的函数对象 初始化
      */
     public static <T, K, U>
     Collector<T, ?, Map<K,U>> toMap(Function<? super T, ? extends K> keyMapper,
@@ -1536,6 +1620,7 @@ public final class Collectors {
 
     /**
      * Implementation class used by partitioningBy.
+     * 分区对象 推测 只存在2个Key 一个 true 一个 false  然后每个 T 可能是一个容器类 通过谓语判断 成功的对象 添加到 对应的容器中
      */
     private static final class Partition<T>
             extends AbstractMap<Boolean, T>

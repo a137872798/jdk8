@@ -481,24 +481,31 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
             // Adapt the source spliterator, evaluating each stateful op
             // in the pipeline up to and including this pipeline stage.
             // The depth and flags of each pipeline stage are adjusted accordingly.
+            // 这里将 深度暂时设置为 1 ???
             int depth = 1;
+            // 下面这个循环的意思是 从source 开始迭代 直到 走到本元素
             for (@SuppressWarnings("rawtypes") AbstractPipeline u = sourceStage, p = sourceStage.nextStage, e = this;
                  u != e;
                  u = p, p = p.nextStage) {
 
                 int thisOpFlags = p.sourceOrOpFlags;
+                // 判断当前被选中的pipline 是否是有状态的
                 if (p.opIsStateful()) {
+                    // 这里好像是重置深度
                     depth = 0;
 
+                    // 该流是否发生过 短路???
                     if (StreamOpFlag.SHORT_CIRCUIT.isKnown(thisOpFlags)) {
                         // Clear the short circuit flag for next pipeline stage
                         // This stage encapsulates short-circuiting, the next
                         // stage may not have any short-circuit operations, and
                         // if so spliterator.forEachRemaining should be used
                         // for traversal
+                        // 去除该标识
                         thisOpFlags = thisOpFlags & ~StreamOpFlag.IS_SHORT_CIRCUIT;
                     }
 
+                    // 将该 迭代器对象包装成一个并行处理迭代器
                     spliterator = p.opEvaluateParallelLazy(u, spliterator);
 
                     // Inject or clear SIZED on the source pipeline stage
@@ -507,6 +514,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
                             ? (thisOpFlags & ~StreamOpFlag.NOT_SIZED) | StreamOpFlag.IS_SIZED
                             : (thisOpFlags & ~StreamOpFlag.IS_SIZED) | StreamOpFlag.NOT_SIZED;
                 }
+                // 设置该节点的深度 如果发现某节点是 stateful 就会重置深度
                 p.depth = depth++;
                 p.combinedFlags = StreamOpFlag.combineOpFlags(thisOpFlags, u.combinedFlags);
             }
@@ -522,6 +530,10 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
 
     // PipelineHelper
 
+    /**
+     * 看来只有 source 可以返回 outputShape()
+     * @return
+     */
     @Override
     final StreamShape getSourceShape() {
         @SuppressWarnings("rawtypes")
@@ -532,11 +544,27 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
         return p.getOutputShape();
     }
 
+    /**
+     * 返回精准的长度信息
+     * @param spliterator the spliterator describing the relevant portion of the
+     *        source data
+     * @param <P_IN>
+     * @return
+     */
     @Override
     final <P_IN> long exactOutputSizeIfKnown(Spliterator<P_IN> spliterator) {
+        // 如果携带了 SIZED 标识 才代表 可以调用某方法获取精确的size信息
         return StreamOpFlag.SIZED.isKnown(getStreamAndOpFlags()) ? spliterator.getExactSizeIfKnown() : -1;
     }
 
+    /**
+     * 包装sink 拷贝信息
+     * @param sink the {@code Sink} to receive the results
+     * @param spliterator the spliterator describing the source input to process
+     * @param <P_IN>
+     * @param <S>
+     * @return
+     */
     @Override
     final <P_IN, S extends Sink<E_OUT>> S wrapAndCopyInto(S sink, Spliterator<P_IN> spliterator) {
         copyInto(wrapSink(Objects.requireNonNull(sink)), spliterator);
@@ -547,12 +575,18 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
     final <P_IN> void copyInto(Sink<P_IN> wrappedSink, Spliterator<P_IN> spliterator) {
         Objects.requireNonNull(wrappedSink);
 
+        /**
+         * 没有短路的情况 使用指定长度 初始化 sink容器 sink 默认实现是Node对象
+         *
+         */
         if (!StreamOpFlag.SHORT_CIRCUIT.isKnown(getStreamAndOpFlags())) {
             wrappedSink.begin(spliterator.getExactSizeIfKnown());
+            // 将元素 填充到容器中
             spliterator.forEachRemaining(wrappedSink);
             wrappedSink.end();
         }
         else {
+            // 如果发生了短路
             copyIntoWithCancel(wrappedSink, spliterator);
         }
     }
@@ -565,6 +599,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
         while (p.depth > 0) {
             p = p.previousStage;
         }
+        // 初始化内部的数组
         wrappedSink.begin(spliterator.getExactSizeIfKnown());
         p.forEachWithCancel(spliterator, wrappedSink);
         wrappedSink.end();
@@ -579,17 +614,30 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
         return StreamOpFlag.ORDERED.isKnown(combinedFlags);
     }
 
+    /**
+     * 包装 sink
+     * @param sink the {@code Sink} to receive the results
+     * @param <P_IN>
+     * @return
+     */
     @Override
     @SuppressWarnings("unchecked")
     final <P_IN> Sink<P_IN> wrapSink(Sink<E_OUT> sink) {
         Objects.requireNonNull(sink);
 
         for ( @SuppressWarnings("rawtypes") AbstractPipeline p=AbstractPipeline.this; p.depth > 0; p=p.previousStage) {
+            // 使用 combinedFlag 去 包装信息
             sink = p.opWrapSink(p.previousStage.combinedFlags, sink);
         }
         return (Sink<P_IN>) sink;
     }
 
+    /**
+     * 包装迭代器
+     * @param sourceSpliterator
+     * @param <P_IN>
+     * @return
+     */
     @Override
     @SuppressWarnings("unchecked")
     final <P_IN> Spliterator<E_OUT> wrapSpliterator(Spliterator<P_IN> sourceSpliterator) {
@@ -601,6 +649,17 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
         }
     }
 
+    /**
+     * 计算结果
+     * @param spliterator the source {@code Spliterator}
+     * @param flatten if true and the pipeline is a parallel pipeline then the
+     *        {@code Node} returned will contain no children, otherwise the
+     *        {@code Node} may represent the root in a tree that reflects the
+     *        shape of the computation tree.
+     * @param generator a factory function for array instances
+     * @param <P_IN>
+     * @return
+     */
     @Override
     @SuppressWarnings("unchecked")
     final <P_IN> Node<E_OUT> evaluate(Spliterator<P_IN> spliterator,
@@ -611,8 +670,10 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
             return evaluateToNode(this, spliterator, flatten, generator);
         }
         else {
+            // 生成 builder 对象
             Node.Builder<E_OUT> nb = makeNodeBuilder(
                     exactOutputSizeIfKnown(spliterator), generator);
+            // 包装builder 对象
             return wrapAndCopyInto(nb, spliterator).build();
         }
     }

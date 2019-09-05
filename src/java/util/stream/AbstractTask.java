@@ -82,6 +82,7 @@ import java.util.concurrent.ForkJoinPool;
  *        result type
  * @param <K> Type of parent, child and sibling tasks
  * @since 1.8
+ * Stream 中使用的task 是 基于 ForkJoin的
  */
 @SuppressWarnings("serial")
 abstract class AbstractTask<P_IN, P_OUT, R,
@@ -93,25 +94,35 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * To allow load balancing, we over-partition, currently to approximately
      * four tasks per processor, which enables others to help out
      * if leaf tasks are uneven or some processors are otherwise busy.
+     * ForkJoinPool.getCommonPoolParallelism() 一般情况下为 Runtime.getRuntime().availableProcessors() - 1
+     * 代表一个节点下最多多少leaf ???
      */
     static final int LEAF_TARGET = ForkJoinPool.getCommonPoolParallelism() << 2;
 
     /** The pipeline helper, common to all tasks in a computation */
+    /**
+     * pipeline 实现类 (helper 只是一个接口) 用于 协助 并发执行任务
+     */
     protected final PipelineHelper<P_OUT> helper;
 
     /**
      * The spliterator for the portion of the input associated with the subtree
      * rooted at this task
+     * 拆分迭代器
      */
     protected Spliterator<P_IN> spliterator;
 
     /** Target leaf size, common to all tasks in a computation */
+    /**
+     * 目标长度
+     */
     protected long targetSize; // may be laziliy initialized
 
     /**
      * The left child.
      * null if no children
      * if non-null rightChild is non-null
+     * 左子节点
      */
     protected K leftChild;
 
@@ -119,10 +130,14 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * The right child.
      * null if no children
      * if non-null leftChild is non-null
+     * 右子节点
      */
     protected K rightChild;
 
     /** The result of this node, if completed */
+    /**
+     * 执行结果
+     */
     private R localResult;
 
     /**
@@ -135,6 +150,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      */
     protected AbstractTask(PipelineHelper<P_OUT> helper,
                            Spliterator<P_IN> spliterator) {
+        // () 内的数据代表关联的下个节点 可以将 task 也看成链表结构 如果每个 completer 都是 一个新的task
         super(null);
         this.helper = helper;
         this.spliterator = spliterator;
@@ -164,6 +180,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * @param spliterator {@code Spliterator} describing the subtree rooted at
      *        this node, obtained by splitting the parent {@code Spliterator}
      * @return newly constructed child node
+     * 将本节点变成某个 子节点 ???
      */
     protected abstract K makeChild(Spliterator<P_IN> spliterator);
 
@@ -172,6 +189,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * {@code compute()} and the result passed to @{code setLocalResult()}
      *
      * @return the computed result of a leaf node
+     * 计算某个 leaf 的结果
      */
     protected abstract R doLeaf();
 
@@ -179,6 +197,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * Returns a suggested target leaf size based on the initial size estimate.
      *
      * @return suggested target leaf size
+     * 获取建议的长度
      */
     public static long suggestTargetSize(long sizeEstimate) {
         long est = sizeEstimate / LEAF_TARGET;
@@ -250,6 +269,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * positive.
      *
      * @return {@code true} if this task is a leaf node
+     * 如果没有 child 节点就代表 当前节点是 leaf 节点
      */
     protected boolean isLeaf() {
         return leftChild == null;
@@ -259,6 +279,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * Indicates whether this task is the root node
      *
      * @return {@code true} if this task is the root node.
+     * 如果没有父节点 就代表 是root 节点
      */
     protected boolean isRoot() {
         return getParent() == null;
@@ -268,6 +289,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * Returns the parent of this task, or null if this task is the root
      *
      * @return the parent of this task, or null if this task is the root
+     * completer 节点就是父级节点
      */
     @SuppressWarnings("unchecked")
     protected K getParent() {
@@ -286,19 +308,29 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * that may be systematically biased toward left-heavy or
      * right-heavy splits, we alternate which child is forked versus
      * continued in the loop.
+     * 计算结果
      */
     @Override
     public void compute() {
+        // rs 代表右侧的 迭代器  ls 是 左侧迭代器 一开始 左侧迭代器 为 null
         Spliterator<P_IN> rs = spliterator, ls; // right, left spliterators
+        // 预估的长度
         long sizeEstimate = rs.estimateSize();
         long sizeThreshold = getTargetSize(sizeEstimate);
         boolean forkRight = false;
         @SuppressWarnings("unchecked") K task = (K) this;
+        // trySplit 会将迭代器 的前半部分拆出来 生成一个新的迭代器
         while (sizeEstimate > sizeThreshold && (ls = rs.trySplit()) != null) {
+            // taskToFork 应该是代表 将会被 拆分的节点
             K leftChild, rightChild, taskToFork;
+            // 使用左迭代器 生成一个新的 节点对象
             task.leftChild  = leftChild = task.makeChild(ls);
+            // 使用右迭代器 生成新节点
             task.rightChild = rightChild = task.makeChild(rs);
+            // 为什么设置成1???
             task.setPendingCount(1);
+            // 代表要分解右边  貌似拆分的逻辑是由 fork() 进行的 这里只是设置了 下次要拆分的节点 如果要拆右边 那么 下次while 要处理的就会变成左节点(包括 更换迭代器)
+            // 产生的结果并不是一颗平衡树
             if (forkRight) {
                 forkRight = false;
                 rs = ls;
@@ -306,14 +338,18 @@ abstract class AbstractTask<P_IN, P_OUT, R,
                 taskToFork = rightChild;
             }
             else {
+                // 代表本次会分解左边 那么 下次就要分解右边
                 forkRight = true;
                 task = rightChild;
                 taskToFork = leftChild;
             }
+            // 拆分任务
             taskToFork.fork();
             sizeEstimate = rs.estimateSize();
         }
+        // 将 叶子节点 的结果设置
         task.setLocalResult(task.doLeaf());
+        // 将本节点 pending - 1
         task.tryComplete();
     }
 
@@ -324,6 +360,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * Clears spliterator and children fields.  Overriders MUST call
      * {@code super.onCompletion} as the last thing they do if they want these
      * cleared.
+     * 帮助GC 回收
      */
     @Override
     public void onCompletion(CountedCompleter<?> caller) {
@@ -337,6 +374,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * a leaf node, this means it is the first leaf node in the encounter order.
      *
      * @return {@code true} if this node is a "leftmost" node
+     * 判断本节点是否是 最左节点 也就是不断调用 leftChild 才能获取到
      */
     protected boolean isLeftmostNode() {
         @SuppressWarnings("unchecked")

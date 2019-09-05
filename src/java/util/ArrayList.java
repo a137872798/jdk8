@@ -1272,7 +1272,6 @@ public class ArrayList<E> extends AbstractList<E>
      * @return a {@code Spliterator} over the elements in this list
      * @since 1.8
      */
-    // 1.8新增，有待研究
     @Override
     public Spliterator<E> spliterator() {
         return new ArrayListSpliterator<>(this, 0, -1, 0);

@@ -193,12 +193,14 @@ import java.util.function.Supplier;
  *            hidden as an implementation detail)
  * @param <R> the result type of the reduction operation
  * @since 1.8
+ * 返回容器相关的函数对象
  */
 public interface Collector<T, A, R> {
     /**
      * A function that creates and returns a new mutable result container.
      *
      * @return a function which returns a new, mutable result container
+     * 获取 生成 A 元素的 提供者
      */
     Supplier<A> supplier();
 
@@ -206,6 +208,7 @@ public interface Collector<T, A, R> {
      * A function that folds a value into a mutable result container.
      *
      * @return a function which folds a value into a mutable result container
+     * 接收 A T 类型 并按某种公式计算结果
      */
     BiConsumer<A, T> accumulator();
 
@@ -216,6 +219,7 @@ public interface Collector<T, A, R> {
      *
      * @return a function which combines two partial results into a combined
      * result
+     * 接收2个元素 生成一个新元素  3个对象都是 A 类型
      */
     BinaryOperator<A> combiner();
 
@@ -229,6 +233,7 @@ public interface Collector<T, A, R> {
      *
      * @return a function which transforms the intermediate result to the final
      * result
+     * 接收一种元素 返回另一种元素
      */
     Function<A, R> finisher();
 
@@ -237,6 +242,7 @@ public interface Collector<T, A, R> {
      * the characteristics of this Collector.  This set should be immutable.
      *
      * @return an immutable set of collector characteristics
+     * 返回一组统计信息
      */
     Set<Characteristics> characteristics();
 
@@ -256,6 +262,7 @@ public interface Collector<T, A, R> {
      *           for the new collector
      * @throws NullPointerException if any argument is null
      * @return the new {@code Collector}
+     * 根据传入的一组函数 生成 Collector 对象
      */
     public static<T, R> Collector<T, R, R> of(Supplier<R> supplier,
                                               BiConsumer<R, T> accumulator,
@@ -266,6 +273,7 @@ public interface Collector<T, A, R> {
         Objects.requireNonNull(combiner);
         Objects.requireNonNull(characteristics);
         Set<Characteristics> cs = (characteristics.length == 0)
+                                    // 默认携带 IDENTITY_FINISH 属性
                                   ? Collectors.CH_ID
                                   : Collections.unmodifiableSet(EnumSet.of(Collector.Characteristics.IDENTITY_FINISH,
                                                                            characteristics));
@@ -310,6 +318,7 @@ public interface Collector<T, A, R> {
     /**
      * Characteristics indicating properties of a {@code Collector}, which can
      * be used to optimize reduction implementations.
+     * 关于该 Collector 的 特征信息
      */
     enum Characteristics {
         /**
@@ -321,6 +330,7 @@ public interface Collector<T, A, R> {
          * <p>If a {@code CONCURRENT} collector is not also {@code UNORDERED},
          * then it should only be evaluated concurrently if applied to an
          * unordered data source.
+         * 支持并发调用
          */
         CONCURRENT,
 
@@ -328,6 +338,7 @@ public interface Collector<T, A, R> {
          * Indicates that the collection operation does not commit to preserving
          * the encounter order of input elements.  (This might be true if the
          * result container has no intrinsic order, such as a {@link Set}.)
+         * 无序
          */
         UNORDERED,
 
@@ -335,6 +346,7 @@ public interface Collector<T, A, R> {
          * Indicates that the finisher function is the identity function and
          * can be elided.  If set, it must be the case that an unchecked cast
          * from A to R will succeed.
+         * 代表不存在 终结函数???  这样 就不需要 判断 是否能转型成功
          */
         IDENTITY_FINISH
     }

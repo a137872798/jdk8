@@ -395,7 +395,7 @@ public interface Spliterator<T> {
      *
      * @return the estimated size, or {@code Long.MAX_VALUE} if infinite,
      *         unknown, or too expensive to compute.
-     *         预估拆分后的长度???
+     *         预估长度???
      */
     long estimateSize();
 

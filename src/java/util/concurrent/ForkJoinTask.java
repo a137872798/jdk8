@@ -249,10 +249,13 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
 
     /** The run status of this task */
     volatile int status; // accessed directly by pool and workers
+    // negative
     static final int DONE_MASK   = 0xf0000000;  // mask out non-completion bits
     static final int NORMAL      = 0xf0000000;  // must be negative
     static final int CANCELLED   = 0xc0000000;  // must be < NORMAL
     static final int EXCEPTIONAL = 0x80000000;  // must be < CANCELLED
+
+    // positive
     static final int SIGNAL      = 0x00010000;  // must be >= 1 << 16
     static final int SMASK       = 0x0000ffff;  // short bits for tags
 
