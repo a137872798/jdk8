@@ -53,6 +53,7 @@ import java.util.function.ToLongFunction;
  * @param <P_OUT> type of elements in produced by this stage
  *
  * @since 1.8
+ * Pipeline 的默认实现
  */
 abstract class ReferencePipeline<P_IN, P_OUT>
         extends AbstractPipeline<P_IN, P_OUT, Stream<P_OUT>>
@@ -65,6 +66,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
      * @param sourceFlags the source flags for the stream source, described in
      *        {@link StreamOpFlag}
      * @param parallel {@code true} if the pipeline is parallel
+     *                             管道 通过一个可拆分迭代器对象进行初始化 sourceFlags 代表 数据源的特性 parallel 代表能否并行执行
      */
     ReferencePipeline(Supplier<? extends Spliterator<?>> source,
                       int sourceFlags, boolean parallel) {
@@ -89,6 +91,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
      * pipeline.
      *
      * @param upstream the upstream element source.
+     *                 通过指定上个节点对象来初始化
      */
     ReferencePipeline(AbstractPipeline<?, P_IN, ?> upstream, int opFlags) {
         super(upstream, opFlags);
@@ -96,11 +99,24 @@ abstract class ReferencePipeline<P_IN, P_OUT>
 
     // Shape-specific methods
 
+    /**
+     * 该对象指定的 元素类型 就是Reference
+     * @return
+     */
     @Override
     final StreamShape getOutputShape() {
         return StreamShape.REFERENCE;
     }
 
+    /**
+     * 将元素整合到一个节点中
+     * @param helper the pipeline helper describing the pipeline stages
+     * @param spliterator the source spliterator
+     * @param flattenTree true if the returned node should be flattened
+     * @param generator the array generator
+     * @param <P_IN>
+     * @return
+     */
     @Override
     final <P_IN> Node<P_OUT> evaluateToNode(PipelineHelper<P_OUT> helper,
                                         Spliterator<P_IN> spliterator,

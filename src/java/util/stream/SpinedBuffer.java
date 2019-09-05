@@ -99,7 +99,7 @@ class SpinedBuffer<E>
     @SuppressWarnings("unchecked")
     SpinedBuffer(int initialCapacity) {
         super(initialCapacity);
-        // 创建等量的 chunk 数组对象 然后数据应该是往每个 chunk 中填入
+        // 创建等量的 chunk 数组对象 然后数据应该是往每个 chunk 中填入 默认大小为16
         curChunk = (E[]) new Object[1 << initialChunkPower];
     }
 
@@ -118,7 +118,9 @@ class SpinedBuffer<E>
      */
     protected long capacity() {
         return (spineIndex == 0)
+                // 代表总数组的长度
                ? curChunk.length
+                // spine[spineIndex].length 的长度为 n*curChunk.length  并且还要加上priorElementCount[spineIndex]
                : priorElementCount[spineIndex] + spine[spineIndex].length;
     }
 
@@ -130,9 +132,10 @@ class SpinedBuffer<E>
         if (spine == null) {
             // 当二维数组还没有初始化时  默认 存在8个二级数组
             spine = (E[][]) new Object[MIN_SPINE_SIZE][];
-            // 优先数组 大小也为8
+            // 优先数组 大小也为8 该对象 是记录之前累加的 数组 便于 统计数据
             priorElementCount = new long[MIN_SPINE_SIZE];
-            // 一开始 就将第一个 spine 指向 当前数组
+            // 一开始 就将第一个 spine 指向 当前数组  注意当前数据在初始化时 就是一个 内含多元素的 数组对象
+            // spine 就是一个 二级数组
             spine[0] = curChunk;
         }
     }
@@ -143,17 +146,27 @@ class SpinedBuffer<E>
      */
     @SuppressWarnings("unchecked")
     protected final void ensureCapacity(long targetSize) {
+        // 也就是 如果 容量够就不需要 设置 spine 了???
         long capacity = capacity();
+        // 如果 要求的尺寸超过容量
         if (targetSize > capacity) {
+            // 初始化 spine
             inflateSpine();
+            // spineIndex 一开始应该是 0
             for (int i=spineIndex+1; targetSize > capacity; i++) {
+                // 一开始 spine 为8  所以是不会超过的
                 if (i >= spine.length) {
+                    // 超过8 就按照2倍进行扩张
                     int newSpineSize = spine.length * 2;
                     spine = Arrays.copyOf(spine, newSpineSize);
                     priorElementCount = Arrays.copyOf(priorElementCount, newSpineSize);
                 }
+                // 获取本 spine的 chunk 大小  当i=0,1时 返回 初始大小  (返回的并不是数组大小 而是2的多少次幂)
+                // 之后的 i 对应的 数组大小 是上个的2倍
                 int nextChunkSize = chunkSize(i);
+                // 代表 spine 每过一个 对象 对应的数组长度就增加一倍
                 spine[i] = (E[]) new Object[nextChunkSize];
+                // 上次的数据总和  prior[0] 推测始终是0
                 priorElementCount[i] = priorElementCount[i-1] + spine[i-1].length;
                 capacity += nextChunkSize;
             }
@@ -162,6 +175,7 @@ class SpinedBuffer<E>
 
     /**
      * Force the buffer to increase its capacity.
+     * 代表进行一次扩容 因为 targetSize 比当前容量大会触发 至少一次扩容
      */
     protected void increaseCapacity() {
         ensureCapacity(capacity() + 1);
@@ -169,6 +183,7 @@ class SpinedBuffer<E>
 
     /**
      * Retrieve the element at the specified index.
+     * 传入 下标获取对应的元素
      */
     public E get(long index) {
         // @@@ can further optimize by caching last seen spineIndex,
@@ -176,16 +191,20 @@ class SpinedBuffer<E>
 
         // Casts to int are safe since the spine array index is the index minus
         // the prior element count from the current spine
+        // 脊椎下标未设置时 直接从 curChunk 获取数据就可以了
         if (spineIndex == 0) {
+            // 要求的下标不能超过已写入的元素
             if (index < elementIndex)
                 return curChunk[((int) index)];
             else
                 throw new IndexOutOfBoundsException(Long.toString(index));
         }
 
+        // 超过了 总数直接抛出异常
         if (index >= count())
             throw new IndexOutOfBoundsException(Long.toString(index));
 
+        // 这里又是使用 优先数组与 spine 数组的元素总和   对了 prior内部的长度是 上个 prior + spine
         for (int j=0; j <= spineIndex; j++)
             if (index < priorElementCount[j] + spine[j].length)
                 return spine[j][((int) (index - priorElementCount[j]))];
@@ -196,21 +215,26 @@ class SpinedBuffer<E>
     /**
      * Copy the elements, starting at the specified offset, into the specified
      * array.
+     * 将数组 从指定的 offset 开始复制元素
      */
     public void copyInto(E[] array, int offset) {
+        // 判断 一共有多少元素
         long finalOffset = offset + count();
         if (finalOffset > array.length || finalOffset < offset) {
             throw new IndexOutOfBoundsException("does not fit");
         }
 
+        // 代表还没有 使用到二级数组 那么直接从 curChunk中拷贝数据就好
         if (spineIndex == 0)
             System.arraycopy(curChunk, 0, array, offset, elementIndex);
         else {
             // full chunks
             for (int i=0; i < spineIndex; i++) {
+                // 依次从 spine 中设置数据  因为 假设空间是足够的 不然上面就会抛出异常
                 System.arraycopy(spine[i], 0, array, offset, spine[i].length);
                 offset += spine[i].length;
             }
+            // 上面的条件是 <spineIndex  最后一个 spine 还有部分数据没有设置
             if (elementIndex > 0)
                 System.arraycopy(curChunk, 0, array, offset, elementIndex);
         }
@@ -219,9 +243,11 @@ class SpinedBuffer<E>
     /**
      * Create a new array using the specified array factory, and copy the
      * elements into it.
+     * 获取 尺寸 并按照指定的 数组生成工厂 之后 将本数据 转移到数组中
      */
     public E[] asArray(IntFunction<E[]> arrayFactory) {
         long size = count();
+        // 超过给定值 抛出异常
         if (size >= Nodes.MAX_ARRAY_SIZE)
             throw new IllegalArgumentException(Nodes.BAD_SIZE);
         E[] result = arrayFactory.apply((int) size);
@@ -229,9 +255,14 @@ class SpinedBuffer<E>
         return result;
     }
 
+    /**
+     * 清空元素
+     */
     @Override
     public void clear() {
+        // 代表膨胀过  spine[1] 以及之后的怎么处理???
         if (spine != null) {
+            // 将 chunk 中每个元素都 置 null
             curChunk = spine[0];
             for (int i=0; i<curChunk.length; i++)
                 curChunk[i] = null;
@@ -246,6 +277,10 @@ class SpinedBuffer<E>
         spineIndex = 0;
     }
 
+    /**
+     * 使用 iterator 封装内部的 spliterator
+     * @return
+     */
     @Override
     public Iterator<E> iterator() {
         return Spliterators.iterator(spliterator());
@@ -263,16 +298,26 @@ class SpinedBuffer<E>
             consumer.accept(curChunk[i]);
     }
 
+    /**
+     * 实现消费者接口
+     * @param e
+     */
     @Override
     public void accept(E e) {
+        // 代表 当前数组 已经被 全部分配
         if (elementIndex == curChunk.length) {
+            // 需要生成下一个数组  如果 spine 已经设置的话 该方法是不会有任何操作的
             inflateSpine();
+            // 一般会满足后者 这时就要强制扩容
             if (spineIndex+1 >= spine.length || spine[spineIndex+1] == null)
                 increaseCapacity();
+            // 扩容后 修改对应的值
             elementIndex = 0;
             ++spineIndex;
+            // curChunk 要指向新的 值 同时 elementIndex 要从新开始计算
             curChunk = spine[spineIndex];
         }
+        // 填充元素
         curChunk[elementIndex++] = e;
     }
 
@@ -283,24 +328,40 @@ class SpinedBuffer<E>
         return "SpinedBuffer:" + list.toString();
     }
 
+    /**
+     * 哪里看出是有序了 ???
+     */
     private static final int SPLITERATOR_CHARACTERISTICS
             = Spliterator.SIZED | Spliterator.ORDERED | Spliterator.SUBSIZED;
 
     /**
      * Return a {@link Spliterator} describing the contents of the buffer.
+     * 生成对应的 迭代器对象
      */
     public Spliterator<E> spliterator() {
         class Splitr implements Spliterator<E> {
             // The current spine index
+            /**
+             * 当前的 spine 下标
+             */
             int splSpineIndex;
 
             // Last spine index
+            /**
+             * 最大值 如果扩容了 该值不是无效了吗???
+             */
             final int lastSpineIndex;
 
             // The current element index into the current spine
+            /**
+             * 当前 spine 中 已经遍历到 第几个元素下标
+             */
             int splElementIndex;
 
             // Last spine's last element index + 1
+            /**
+             * 最后一个 spine 的最后一个元素 + 1
+             */
             final int lastSpineElementFence;
 
             // When splSpineIndex >= lastSpineIndex and
@@ -309,8 +370,18 @@ class SpinedBuffer<E>
             // tryAdvance can set splSpineIndex > spineIndex if the last spine is full
 
             // The current spine array
+            /**
+             * 当前 spine 对应的 chunk 数组对象
+             */
             E[] splChunk;
 
+            /**
+             * 指定 当前下标 和 最后的下标 不是通过传入一个数组后 自行获取的???
+             * @param firstSpineIndex
+             * @param lastSpineIndex
+             * @param firstSpineElementIndex
+             * @param lastSpineElementFence
+             */
             Splitr(int firstSpineIndex, int lastSpineIndex,
                    int firstSpineElementIndex, int lastSpineElementFence) {
                 this.splSpineIndex = firstSpineIndex;
@@ -318,14 +389,21 @@ class SpinedBuffer<E>
                 this.splElementIndex = firstSpineElementIndex;
                 this.lastSpineElementFence = lastSpineElementFence;
                 assert spine != null || firstSpineIndex == 0 && lastSpineIndex == 0;
+                // 根据 是否 初始化 spine 将splChunk 指向不同的 curChunk
                 splChunk = (spine == null) ? curChunk : spine[firstSpineIndex];
             }
 
+            /**
+             * 评估大小
+             * @return
+             */
             @Override
             public long estimateSize() {
+                // 如果 spine 偏移量相同 就返回 element 的偏差值
                 return (splSpineIndex == lastSpineIndex)
                        ? (long) lastSpineElementFence - splElementIndex
                        : // # of elements prior to end -
+                        // 通过 prior 进行快捷计算
                        priorElementCount[lastSpineIndex] + lastSpineElementFence -
                        // # of elements prior to current
                        priorElementCount[splSpineIndex] - splElementIndex;
@@ -336,14 +414,21 @@ class SpinedBuffer<E>
                 return SPLITERATOR_CHARACTERISTICS;
             }
 
+            /**
+             * 获取下个元素
+             * @param consumer
+             * @return
+             */
             @Override
             public boolean tryAdvance(Consumer<? super E> consumer) {
                 Objects.requireNonNull(consumer);
 
                 if (splSpineIndex < lastSpineIndex
                     || (splSpineIndex == lastSpineIndex && splElementIndex < lastSpineElementFence)) {
+                    // 获取指定元素 通过 消费者来消耗
                     consumer.accept(splChunk[splElementIndex++]);
 
+                    // 增加偏移量
                     if (splElementIndex == splChunk.length) {
                         splElementIndex = 0;
                         ++splSpineIndex;
@@ -355,6 +440,10 @@ class SpinedBuffer<E>
                 return false;
             }
 
+            /**
+             * 针对剩余所有元素 使用消费者处理
+             * @param consumer
+             */
             @Override
             public void forEachRemaining(Consumer<? super E> consumer) {
                 Objects.requireNonNull(consumer);
@@ -382,19 +471,29 @@ class SpinedBuffer<E>
                 }
             }
 
+            /**
+             * 分裂 最核心的方法
+             * @return
+             */
             @Override
             public Spliterator<E> trySplit() {
+                // 代表他们 相差几个 Spine[]
                 if (splSpineIndex < lastSpineIndex) {
                     // split just before last chunk (if it is full this means 50:50 split)
+                    // 因为 下个 spine 总是上个的2倍 可以理解为 这样分配是最接近于 50%的  (1+2+4)/8
                     Spliterator<E> ret = new Splitr(splSpineIndex, lastSpineIndex - 1,
+                                                    // 下面的2个偏移量的 含义就是 当前 spine对应的 chunk数组的下标 和 倒数第二个spine对应的 数组下标最大值
                                                     splElementIndex, spine[lastSpineIndex-1].length);
                     // position to start of last chunk
+                    // 当前元素 就变成了 最后一个元素 并返回 前面被拆出来的部分
                     splSpineIndex = lastSpineIndex;
                     splElementIndex = 0;
                     splChunk = spine[splSpineIndex];
                     return ret;
                 }
+                // 代表已经是最后一个元素了
                 else if (splSpineIndex == lastSpineIndex) {
+                    // 获取 between 的下标
                     int t = (lastSpineElementFence - splElementIndex) / 2;
                     if (t == 0)
                         return null;
@@ -409,6 +508,7 @@ class SpinedBuffer<E>
                 }
             }
         }
+        // 注意传入的是 当前的值
         return new Splitr(0, spineIndex, 0, elementIndex);
     }
 
@@ -427,6 +527,7 @@ class SpinedBuffer<E>
      * @param <E> the wrapper type for this primitive type
      * @param <T_ARR> the array type for this primitive type
      * @param <T_CONS> the Consumer type for this primitive type
+     *                代表原始类型???  该类代码 基本与上面那个类相同
      */
     abstract static class OfPrimitive<E, T_ARR, T_CONS>
             extends AbstractSpinedBuffer implements Iterable<E> {
@@ -732,6 +833,7 @@ class SpinedBuffer<E>
 
     /**
      * An ordered collection of {@code int} values.
+     * 指定了 容器类型是 int 类型
      */
     static class OfInt extends SpinedBuffer.OfPrimitive<Integer, int[], IntConsumer>
             implements IntConsumer {

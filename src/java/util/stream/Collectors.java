@@ -1293,6 +1293,7 @@ public final class Collectors {
     public static <T, K, U>
     Collector<T, ?, Map<K,U>> toMap(Function<? super T, ? extends K> keyMapper,
                                     Function<? super T, ? extends U> valueMapper) {
+        // throwingMerger 代表 2个目标值 在merger 时 应该抛出异常
         return toMap(keyMapper, valueMapper, throwingMerger(), HashMap::new);
     }
 
@@ -1347,6 +1348,7 @@ public final class Collectors {
      * @see #toMap(Function, Function)
      * @see #toMap(Function, Function, BinaryOperator, Supplier)
      * @see #toConcurrentMap(Function, Function, BinaryOperator)
+     * 这里指定了 merger 函数
      */
     public static <T, K, U>
     Collector<T, ?, Map<K,U>> toMap(Function<? super T, ? extends K> keyMapper,
@@ -1394,20 +1396,22 @@ public final class Collectors {
      * @see #toMap(Function, Function)
      * @see #toMap(Function, Function, BinaryOperator)
      * @see #toConcurrentMap(Function, Function, BinaryOperator, Supplier)
+     * 生成一个目标map 对象
      */
     public static <T, K, U, M extends Map<K, U>>
     Collector<T, ?, M> toMap(Function<? super T, ? extends K> keyMapper,
                                 Function<? super T, ? extends U> valueMapper,
                                 BinaryOperator<U> mergeFunction,
                                 Supplier<M> mapSupplier) {
+        // 生成累加器   merger 是 map 的方法  merger 用于 解决key 冲突的情况
         BiConsumer<M, T> accumulator
                 = (map, element) -> map.merge(keyMapper.apply(element),
                                               valueMapper.apply(element), mergeFunction);
+        // 使用 Map::new 作为 supplier   mapMerger() 生成 merger 函数
         return new CollectorImpl<>(mapSupplier, accumulator, mapMerger(mergeFunction), CH_ID);
     }
 
     /**
-     * Returns a concurrent {@code Collector} that accumulates elements into a
      * {@code ConcurrentMap} whose keys and values are the result of applying
      * the provided mapping functions to the input elements.
      *
@@ -1546,6 +1550,7 @@ public final class Collectors {
      * @see #toConcurrentMap(Function, Function)
      * @see #toConcurrentMap(Function, Function, BinaryOperator)
      * @see #toMap(Function, Function, BinaryOperator, Supplier)
+     * 返回并发容器 因为没有下游的概念 直接要求 使用的 容器为 ConcurrentHashMap 就可以
      */
     public static <T, K, U, M extends ConcurrentMap<K, U>>
     Collector<T, ?, M> toConcurrentMap(Function<? super T, ? extends K> keyMapper,
@@ -1569,6 +1574,7 @@ public final class Collectors {
      *
      * @see #summarizingDouble(ToDoubleFunction)
      * @see #summarizingLong(ToLongFunction)
+     * 统计对象不看
      */
     public static <T>
     Collector<T, ?, IntSummaryStatistics> summarizingInt(ToIntFunction<? super T> mapper) {

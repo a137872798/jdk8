@@ -180,7 +180,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * @param spliterator {@code Spliterator} describing the subtree rooted at
      *        this node, obtained by splitting the parent {@code Spliterator}
      * @return newly constructed child node
-     * 将本节点变成某个 子节点 ???
+     * 创建一个子节点
      */
     protected abstract K makeChild(Spliterator<P_IN> spliterator);
 
@@ -327,7 +327,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
             task.leftChild  = leftChild = task.makeChild(ls);
             // 使用右迭代器 生成新节点
             task.rightChild = rightChild = task.makeChild(rs);
-            // 为什么设置成1???
+            // 为什么设置成1???  每次为 task 对象 设置 子节点时 本 pending 就会变成1
             task.setPendingCount(1);
             // 代表要分解右边  貌似拆分的逻辑是由 fork() 进行的 这里只是设置了 下次要拆分的节点 如果要拆右边 那么 下次while 要处理的就会变成左节点(包括 更换迭代器)
             // 产生的结果并不是一颗平衡树

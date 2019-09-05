@@ -178,7 +178,7 @@ final class Nodes {
         return (exactSizeIfKnown >= 0 && exactSizeIfKnown < MAX_ARRAY_SIZE)
                 // 返回固定长度的 NodeBuilder 对象
                ? new FixedNodeBuilder<>(exactSizeIfKnown, generator)
-                // 返回一个特殊的 Builder对象
+                // 返回一个具备扩容能力的 node 对象  注意返回的builder 对象既满足 build 接口 又满足 node 接口
                : builder();
     }
 
@@ -187,6 +187,7 @@ final class Nodes {
      *
      * @param <T> the type of elements of the node builder
      * @return a {@code Node.Builder}
+     * 默认返回一个 具备 扩容能力的  node 对象
      */
     static <T> Node.Builder<T> builder() {
         return new SpinedNodeBuilder<>();
@@ -201,6 +202,7 @@ final class Nodes {
      *
      * @param array the array
      * @return a node holding an array
+     * 生成一个 内部基于 数组实现的 node 对象
      */
     static Node.OfInt node(int[] array) {
         return new IntArrayNode(array);
@@ -213,8 +215,10 @@ final class Nodes {
      * otherwise the exact capacity desired.  A fixed capacity builder will
      * fail if the wrong number of elements are added to the builder.
      * @return a {@code Node.Builder.OfInt}
+     * 根据 确定的大小来创建 builder 对象
      */
     static Node.Builder.OfInt intBuilder(long exactSizeIfKnown) {
+        // 返回固定大小的 node 或者 可以扩容的 node
         return (exactSizeIfKnown >= 0 && exactSizeIfKnown < MAX_ARRAY_SIZE)
                ? new IntFixedNodeBuilder(exactSizeIfKnown)
                : intBuilder();
@@ -250,6 +254,7 @@ final class Nodes {
      * otherwise the exact capacity desired.  A fixed capacity builder will
      * fail if the wrong number of elements are added to the builder.
      * @return a {@code Node.Builder.OfLong}
+     * 同上
      */
     static Node.Builder.OfLong longBuilder(long exactSizeIfKnown) {
         return (exactSizeIfKnown >= 0 && exactSizeIfKnown < MAX_ARRAY_SIZE)
@@ -287,6 +292,7 @@ final class Nodes {
      * otherwise the exact capacity desired.  A fixed capacity builder will
      * fail if the wrong number of elements are added to the builder.
      * @return a {@code Node.Builder.OfDouble}
+     * 同上
      */
     static Node.Builder.OfDouble doubleBuilder(long exactSizeIfKnown) {
         return (exactSizeIfKnown >= 0 && exactSizeIfKnown < MAX_ARRAY_SIZE)
@@ -325,19 +331,25 @@ final class Nodes {
      *                    describing an array before returning
      * @param generator the array generator
      * @return a {@link Node} describing the output elements
+     * 将迭代器中的元素 整合成一个 node 对象
      */
     public static <P_IN, P_OUT> Node<P_OUT> collect(PipelineHelper<P_OUT> helper,
                                                     Spliterator<P_IN> spliterator,
                                                     boolean flattenTree,
                                                     IntFunction<P_OUT[]> generator) {
+        // 返回迭代器内元素的长度
         long size = helper.exactOutputSizeIfKnown(spliterator);
+        // size >= 0 代表 迭代器设置了 SIZED  也就是可以获取长度信息
         if (size >= 0 && spliterator.hasCharacteristics(Spliterator.SUBSIZED)) {
+            // 如果长度过大 抛出异常
             if (size >= MAX_ARRAY_SIZE)
                 throw new IllegalArgumentException(BAD_SIZE);
+            // 根据长度 生成对应的容器对象
             P_OUT[] array = generator.apply((int) size);
             new SizedCollectorTask.OfRef<>(spliterator, helper, array).invoke();
             return node(array);
         } else {
+            // 代表没有获取到长度信息
             Node<P_OUT> node = new CollectorTask.OfRef<>(helper, generator, spliterator).invoke();
             return flattenTree ? flatten(node, generator) : node;
         }
@@ -1364,7 +1376,7 @@ final class Nodes {
 
     /**
      * Fixed-sized builder class for reference nodes
-     * 固定长度的 Node 构建器
+     * 固定长度的 Node 构建器   该节点又是一个builder 又是一个 node
      */
     private static final class FixedNodeBuilder<T>
             extends ArrayNode<T>
@@ -1436,14 +1448,22 @@ final class Nodes {
 
     /**
      * Variable-sized builder class for reference nodes
+     * 该对象 同样 继承 builder 和 node
      */
     private static final class SpinedNodeBuilder<T>
             extends SpinedBuffer<T>
             implements Node<T>, Node.Builder<T> {
+        /**
+         * 是否 构建完成
+         */
         private boolean building = false;
 
         SpinedNodeBuilder() {} // Avoid creation of special accessor
 
+        /**
+         * 未构建完成不能返回迭代器
+         * @return
+         */
         @Override
         public Spliterator<T> spliterator() {
             assert !building : "during building";
@@ -1456,7 +1476,7 @@ final class Nodes {
             super.forEach(consumer);
         }
 
-        //
+        // 清除元素后 开始 初始化  会判断容量够不够 如果不够的情况下 就会按照上个大小扩容成2倍
         @Override
         public void begin(long size) {
             assert !building : "was already building";
@@ -1465,6 +1485,10 @@ final class Nodes {
             ensureCapacity(size);
         }
 
+        /**
+         * accept 函数 对应到实现 就是往数组中插入元素
+         * @param t the input argument
+         */
         @Override
         public void accept(T t) {
             assert building : "not building";
@@ -1478,12 +1502,23 @@ final class Nodes {
             // @@@ check begin(size) and size
         }
 
+        /**
+         * 将数据拷贝到目标数组
+         * @param array the array into which to copy the contents of this
+         *       {@code Node}
+         * @param offset the starting offset within the array
+         */
         @Override
         public void copyInto(T[] array, int offset) {
             assert !building : "during building";
             super.copyInto(array, offset);
         }
 
+        /**
+         * 将 内部数据 根据 size 属性生成对应容器 并填充后返回
+         * @param arrayFactory
+         * @return
+         */
         @Override
         public T[] asArray(IntFunction<T[]> arrayFactory) {
             assert !building : "during building";
@@ -1497,7 +1532,7 @@ final class Nodes {
         }
     }
 
-    //
+    // 3个空数组对象
 
     private static final int[] EMPTY_INT_ARRAY = new int[0];
     private static final long[] EMPTY_LONG_ARRAY = new long[0];
@@ -2011,36 +2046,70 @@ final class Nodes {
 
     /*
      * This and subclasses are not intended to be serializable
+     * 该类 及子类 不打算被串行化???
      */
     @SuppressWarnings("serial")
     private static abstract class SizedCollectorTask<P_IN, P_OUT, T_SINK extends Sink<P_OUT>,
                                                      K extends SizedCollectorTask<P_IN, P_OUT, T_SINK, K>>
             extends CountedCompleter<Void>
             implements Sink<P_OUT> {
+
+        /**
+         * 对应的可拆分迭代器
+         */
         protected final Spliterator<P_IN> spliterator;
+        /**
+         * 包含一些 协助方法
+         */
         protected final PipelineHelper<P_OUT> helper;
+        /**
+         * 目标长度 ???
+         */
         protected final long targetSize;
+        /**
+         * 当前偏移量
+         */
         protected long offset;
+        /**
+         * 这个 和 targetSize 有什么区别
+         */
         protected long length;
         // For Sink implementation
         protected int index, fence;
 
+        /**
+         * 使用给定的参数进行初始化
+         * @param spliterator
+         * @param helper
+         * @param arrayLength
+         */
         SizedCollectorTask(Spliterator<P_IN> spliterator,
                            PipelineHelper<P_OUT> helper,
                            int arrayLength) {
+            // 需要携带 SUBSIZED 特性
             assert spliterator.hasCharacteristics(Spliterator.SUBSIZED);
             this.spliterator = spliterator;
             this.helper = helper;
+            // 设置 目标大小
             this.targetSize = AbstractTask.suggestTargetSize(spliterator.estimateSize());
             this.offset = 0;
             this.length = arrayLength;
         }
 
+        /**
+         * 通过指定 父节点进行初始化
+         * @param parent
+         * @param spliterator
+         * @param offset
+         * @param length
+         * @param arrayLength
+         */
         SizedCollectorTask(K parent, Spliterator<P_IN> spliterator,
                            long offset, long length, int arrayLength) {
             super(parent);
             assert spliterator.hasCharacteristics(Spliterator.SUBSIZED);
             this.spliterator = spliterator;
+            // 为什么用 parent 的 属性???
             this.helper = parent.helper;
             this.targetSize = parent.targetSize;
             this.offset = offset;
@@ -2053,14 +2122,22 @@ final class Nodes {
             }
         }
 
+        /**
+         * 如果 compute 只是生成2个子节点 那什么时候才真正进行计算???
+         */
         @Override
         public void compute() {
             SizedCollectorTask<P_IN, P_OUT, T_SINK, K> task = this;
+            // 创建一个 右迭代器指向传入的迭代器 并 通过拆分函数 给 左迭代器 赋值
             Spliterator<P_IN> rightSplit = spliterator, leftSplit;
+            // 当 预估大小 超过了 targetSize 允许 进入循环体
             while (rightSplit.estimateSize() > task.targetSize &&
                    (leftSplit = rightSplit.trySplit()) != null) {
+                // 为什么要设成 1  一旦某个task 对象 生成了2个 子节点后 就会把任务分给子节点 所以 pendingcount 设置成了1 ???
                 task.setPendingCount(1);
+                // 获取左侧的大小
                 long leftSplitSize = leftSplit.estimateSize();
+                // 将拆分的2个结果 分别设置到 task的 左右侧  在makeChild 的同时 应该是包含了计算的工作
                 task.makeChild(leftSplit, task.offset, leftSplitSize).fork();
                 task = task.makeChild(rightSplit, task.offset + leftSplitSize,
                                       task.length - leftSplitSize);
@@ -2069,19 +2146,33 @@ final class Nodes {
             assert task.offset + task.length < MAX_ARRAY_SIZE;
             @SuppressWarnings("unchecked")
             T_SINK sink = (T_SINK) task;
+            // 将 sink 本身 装饰成一个 容器对象 并将任务拉取到容器中
+            // helper 本身只是一个调用者 保存了程序调用的逻辑 数据   sink代表容器 而 split 代表数据
+            // 有迭代器 在一次次的trySplit 后 内部的 指针发生变化 所有 exactSize减小了 这样 sink 就会很小
             task.helper.wrapAndCopyInto(sink, rightSplit);
+            // 触发 完成
             task.propagateCompletion();
         }
 
         abstract K makeChild(Spliterator<P_IN> spliterator, long offset, long size);
 
+        /**
+         * 传入size
+         * @param size The exact size of the data to be pushed downstream, if
+         *             known or {@code -1} if unknown or infinite.
+         *
+         *             <p>Prior to this call, the sink must be in the initial state, and after
+         *             this call it is in the active state.
+         */
         @Override
         public void begin(long size) {
+            // length 是 创建对象时 设置的 而 size 代表想要分配的大小
             if (size > length)
                 throw new IllegalStateException("size passed to Sink.begin exceeds array length");
             // Casts to int are safe since absolute size is verified to be within
             // bounds when the root concrete SizedCollectorTask is constructed
             // with the shared array
+            // offset 代表 起始偏移量 那为什么不一开始 就设置 index 既然它不会再其他场景被设置
             index = (int) offset;
             fence = index + (int) length;
         }
@@ -2103,12 +2194,23 @@ final class Nodes {
                 this.array = parent.array;
             }
 
+            /**
+             * 就是返回一个新对象  pending 不设置了吗???
+             * @param spliterator
+             * @param offset
+             * @param size
+             * @return
+             */
             @Override
             OfRef<P_IN, P_OUT> makeChild(Spliterator<P_IN> spliterator,
                                          long offset, long size) {
                 return new OfRef<>(this, spliterator, offset, size);
             }
 
+            /**
+             * 消费函数实现 就是填充元素
+             * @param value
+             */
             @Override
             public void accept(P_OUT value) {
                 if (index >= fence) {
@@ -2215,10 +2317,20 @@ final class Nodes {
         }
     }
 
+    /**
+     * 看来是要将 node 中的数据 转移到数组中
+     * @param <T>
+     * @param <T_NODE>
+     * @param <K>
+     */
     @SuppressWarnings("serial")
     private static abstract class ToArrayTask<T, T_NODE extends Node<T>,
                                               K extends ToArrayTask<T, T_NODE, K>>
             extends CountedCompleter<Void> {
+
+        /**
+         * 内部维护的节点对象
+         */
         protected final T_NODE node;
         protected final int offset;
 
@@ -2233,6 +2345,9 @@ final class Nodes {
             this.offset = offset;
         }
 
+        /**
+         * 将数据 拷贝到数组中
+         */
         abstract void copyNodeToArray();
 
         abstract K makeChild(int childIndex, int offset);
@@ -2241,19 +2356,25 @@ final class Nodes {
         public void compute() {
             ToArrayTask<T, T_NODE, K> task = this;
             while (true) {
+                /**
+                 * 代表没有子节点
+                 */
                 if (task.node.getChildCount() == 0) {
                     task.copyNodeToArray();
                     task.propagateCompletion();
                     return;
                 }
                 else {
+                    // 一次 减少一个节点
                     task.setPendingCount(task.node.getChildCount() - 1);
 
                     int size = 0;
                     int i = 0;
                     for (;i < task.node.getChildCount() - 1; i++) {
+                        // 设置左右节点 i会依次变成 0,1
                         K leftTask = task.makeChild(i, task.offset + size);
                         size += leftTask.node.count();
+                        // 左右会依次触发 fork  处理传递下去了???
                         leftTask.fork();
                     }
                     task = task.makeChild(i, task.offset + size);
@@ -2340,6 +2461,13 @@ final class Nodes {
         }
     }
 
+    /**
+     * 基于collector
+     * @param <P_IN>
+     * @param <P_OUT>
+     * @param <T_NODE>
+     * @param <T_BUILDER>
+     */
     @SuppressWarnings("serial")
     private static class CollectorTask<P_IN, P_OUT, T_NODE extends Node<P_OUT>, T_BUILDER extends Node.Builder<P_OUT>>
             extends AbstractTask<P_IN, P_OUT, T_NODE, CollectorTask<P_IN, P_OUT, T_NODE, T_BUILDER>> {

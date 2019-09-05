@@ -38,6 +38,7 @@ import java.util.function.IntFunction;
  * {@link Object#equals(Object)} to determine equality.
  *
  * @since 1.8
+ * 不同的  Operate ???
  */
 final class DistinctOps {
 

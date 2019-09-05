@@ -114,7 +114,7 @@ abstract class AbstractSpinedBuffer {
     public long count() {
         return (spineIndex == 0)
                ? elementIndex
-                // 这个priorElementCount 看过去像是 一个个空间对象 可能内部直接维护了 某个偏移量
+                // prior 代表之前的所有元素总和 elementIndex 代表 curChunk数组当前已经设置的下标
                : priorElementCount[spineIndex] + elementIndex;
     }
 
