@@ -47,6 +47,7 @@ import java.util.function.Supplier;
  * reductions.
  *
  * @since 1.8
+ * 针对 减少的 终止操作
  */
 final class ReduceOps {
 
@@ -64,17 +65,31 @@ final class ReduceOps {
      * @param combiner the combining function that combines two intermediate
      *        results
      * @return a {@code TerminalOp} implementing the reduction
+     * seed 代表源数据   reducer  代表累加函数   combiner 代表2个 对象的结合函数
      */
     public static <T, U> TerminalOp<T, U>
     makeRef(U seed, BiFunction<U, ? super T, U> reducer, BinaryOperator<U> combiner) {
         Objects.requireNonNull(reducer);
         Objects.requireNonNull(combiner);
         class ReducingSink extends Box<U> implements AccumulatingSink<T, U, ReducingSink> {
+
+            /**
+             * 难怪有些begin 是-1
+             * @param size The exact size of the data to be pushed downstream, if
+             *             known or {@code -1} if unknown or infinite.
+             *
+             *             <p>Prior to this call, the sink must be in the initial state, and after
+             *             this call it is in the active state.
+             */
             @Override
             public void begin(long size) {
                 state = seed;
             }
 
+            /**
+             * 处理原对象 与传入的新对象
+             * @param t the input argument
+             */
             @Override
             public void accept(T t) {
                 state = reducer.apply(state, t);
@@ -120,6 +135,7 @@ final class ReduceOps {
                     empty = false;
                     state = t;
                 } else {
+                    // 已经保存了值的情况下 就处理2个元素的整合结果
                     state = operator.apply(state, t);
                 }
             }
@@ -649,6 +665,7 @@ final class ReduceOps {
      * @param <T> the type of input element to the combining operation
      * @param <R> the result type
      * @param <K> the type of the {@code AccumulatingSink}.
+     *           代表具备累加能力的 sink
      */
     private interface AccumulatingSink<T, R, K extends AccumulatingSink<T, R, K>>
             extends TerminalSink<T, R> {
@@ -660,6 +677,7 @@ final class ReduceOps {
      * {@code AccumulatingSink} instances
      *
      * @param <U> The type of the state element
+     *           包装了元素对象
      */
     private static abstract class Box<U> {
         U state;
@@ -680,9 +698,13 @@ final class ReduceOps {
      * @param <T> the output type of the stream pipeline
      * @param <R> the result type of the reducing operation
      * @param <S> the type of the {@code AccumulatingSink}
+     *           减少操作  TerminalOp 接口 具备 并行处理结果 和串行处理结果
      */
     private static abstract class ReduceOp<T, R, S extends AccumulatingSink<T, R, S>>
             implements TerminalOp<T, R> {
+        /**
+         * 流类型
+         */
         private final StreamShape inputShape;
 
         /**
@@ -705,9 +727,17 @@ final class ReduceOps {
         @Override
         public <P_IN> R evaluateSequential(PipelineHelper<T> helper,
                                            Spliterator<P_IN> spliterator) {
+            // 将数据填充到 容器中就是计算吗???
             return helper.wrapAndCopyInto(makeSink(), spliterator).get();
         }
 
+        /**
+         * 通过forkjoin 计算结果
+         * @param helper the pipeline helper
+         * @param spliterator the source spliterator
+         * @param <P_IN>
+         * @return
+         */
         @Override
         public <P_IN> R evaluateParallel(PipelineHelper<T> helper,
                                          Spliterator<P_IN> spliterator) {
@@ -717,6 +747,7 @@ final class ReduceOps {
 
     /**
      * A {@code ForkJoinTask} for performing a parallel reduce operation.
+     * 继承 forkjoinTask 的子任务
      */
     @SuppressWarnings("serial")
     private static final class ReduceTask<P_IN, P_OUT, R,
@@ -739,9 +770,14 @@ final class ReduceOps {
 
         @Override
         protected ReduceTask<P_IN, P_OUT, R, S> makeChild(Spliterator<P_IN> spliterator) {
+            // 创建子节点
             return new ReduceTask<>(this, spliterator);
         }
 
+        /**
+         * 将信息包装成 leaf 对象
+         * @return
+         */
         @Override
         protected S doLeaf() {
             return helper.wrapAndCopyInto(op.makeSink(), spliterator);
@@ -750,11 +786,13 @@ final class ReduceOps {
         @Override
         public void onCompletion(CountedCompleter<?> caller) {
             if (!isLeaf()) {
+                // 将左右结果整合起来
                 S leftResult = leftChild.getLocalResult();
                 leftResult.combine(rightChild.getLocalResult());
                 setLocalResult(leftResult);
             }
             // GC spliterator, left and right child
+            // 清理工作
             super.onCompletion(caller);
         }
     }

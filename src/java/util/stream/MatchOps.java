@@ -38,6 +38,7 @@ import java.util.function.Supplier;
  * include match-all, match-any, and match-none.
  *
  * @since 1.8
+ * 匹配相关的 ops
  */
 final class MatchOps {
 
@@ -46,8 +47,11 @@ final class MatchOps {
     /**
      * Enum describing quantified match options -- all match, any match, none
      * match.
+     * 代表匹配类型
      */
     enum MatchKind {
+        // 短路的概念大概是 从流中 一旦找到某个匹配的结果就设置 shardingResult
+
         /** Do all elements match the predicate? */
         ANY(true, true),
 
@@ -80,11 +84,18 @@ final class MatchOps {
             MatchKind matchKind) {
         Objects.requireNonNull(predicate);
         Objects.requireNonNull(matchKind);
+        /**
+         * 返回一个 匹配的 sink 对象
+         */
         class MatchSink extends BooleanTerminalSink<T> {
             MatchSink() {
                 super(matchKind);
             }
 
+            /**
+             * 这里是判断传入的值是否符合条件
+             * @param t the input argument
+             */
             @Override
             public void accept(T t) {
                 if (!stop && predicate.test(t) == matchKind.stopOnPredicateMatches) {
@@ -192,9 +203,13 @@ final class MatchOps {
      * elements match the predicate.
      *
      * @param <T> the output type of the stream pipeline
+     *           match 的操作对象
      */
     private static final class MatchOp<T> implements TerminalOp<T, Boolean> {
         private final StreamShape inputShape;
+        /**
+         * 代表 匹配的枚举类型
+         */
         final MatchKind matchKind;
         final Supplier<BooleanTerminalSink<T>> sinkSupplier;
 
@@ -214,6 +229,10 @@ final class MatchOps {
             this.sinkSupplier = sinkSupplier;
         }
 
+        /**
+         * 短路且无序
+         * @return
+         */
         @Override
         public int getOpFlags() {
             return StreamOpFlag.IS_SHORT_CIRCUIT | StreamOpFlag.NOT_ORDERED;
@@ -224,12 +243,26 @@ final class MatchOps {
             return inputShape;
         }
 
+        /**
+         * 将迭代器中数据 传入到 sink 中 进行过滤之后 通过getAndClearState 获取结果
+         * @param helper the pipeline helper
+         * @param spliterator the source spliterator
+         * @param <S>
+         * @return
+         */
         @Override
         public <S> Boolean evaluateSequential(PipelineHelper<T> helper,
                                               Spliterator<S> spliterator) {
             return helper.wrapAndCopyInto(sinkSupplier.get(), spliterator).getAndClearState();
         }
 
+        /**
+         * 并行执行
+         * @param helper the pipeline helper
+         * @param spliterator the source spliterator
+         * @param <S>
+         * @return
+         */
         @Override
         public <S> Boolean evaluateParallel(PipelineHelper<T> helper,
                                             Spliterator<S> spliterator) {
@@ -248,8 +281,12 @@ final class MatchOps {
      * results.  Subclasses implement the shape-specific functionality.
      *
      * @param <T> The output type of the stream pipeline
+     *           代表 是否匹配的 sink 对象
      */
     private static abstract class BooleanTerminalSink<T> implements Sink<T> {
+        /**
+         * 是否已经停止
+         */
         boolean stop;
         boolean value;
 
@@ -273,6 +310,7 @@ final class MatchOps {
      *
      * @param <P_IN> the type of source elements for the pipeline
      * @param <P_OUT> the type of output elements for the pipeline
+     *               并行执行的 task 对象
      */
     @SuppressWarnings("serial")
     private static final class MatchTask<P_IN, P_OUT>
@@ -303,12 +341,17 @@ final class MatchOps {
 
         @Override
         protected Boolean doLeaf() {
+            // 获取结果
             boolean b = helper.wrapAndCopyInto(op.sinkSupplier.get(), spliterator).getAndClearState();
             if (b == op.matchKind.shortCircuitResult)
+                // 根据情况进行短路
                 shortCircuit(b);
             return null;
         }
 
+        /**
+         * 这个相当于是 默认结果  应该被短路就没有empty结果
+         */
         @Override
         protected Boolean getEmptyResult() {
             return !op.matchKind.shortCircuitResult;

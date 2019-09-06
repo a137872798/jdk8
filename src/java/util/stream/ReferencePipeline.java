@@ -109,7 +109,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
     }
 
     /**
-     * 将元素整合到一个节点中
+     * 将元素整合到一个节点中  Nodes.collect 内部使用了 forkjoin的并行处理
      * @param helper the pipeline helper describing the pipeline stages
      * @param spliterator the source spliterator
      * @param flattenTree true if the returned node should be flattened
@@ -125,6 +125,14 @@ abstract class ReferencePipeline<P_IN, P_OUT>
         return Nodes.collect(helper, spliterator, flattenTree, generator);
     }
 
+    /**
+     * 生成一个 包装迭代器
+     * @param ph the pipeline helper describing the pipeline stages
+     * @param supplier the supplier of a spliterator
+     * @param isParallel
+     * @param <P_IN>
+     * @return
+     */
     @Override
     final <P_IN> Spliterator<P_OUT> wrap(PipelineHelper<P_OUT> ph,
                                      Supplier<Spliterator<P_IN>> supplier,
@@ -132,16 +140,40 @@ abstract class ReferencePipeline<P_IN, P_OUT>
         return new StreamSpliterators.WrappingSpliterator<>(ph, supplier, isParallel);
     }
 
+    /**
+     * 生成一个代理迭代器
+     * @param supplier the supplier of a spliterator
+     * @return
+     */
     @Override
     final Spliterator<P_OUT> lazySpliterator(Supplier<? extends Spliterator<P_OUT>> supplier) {
         return new StreamSpliterators.DelegatingSpliterator<>(supplier);
     }
 
+    /**
+     * 为迭代器每个元素执行 sink 方法
+     * @param spliterator the spliterator to pull elements from
+     * @param sink the sink to push elements to
+     */
     @Override
     final void forEachWithCancel(Spliterator<P_OUT> spliterator, Sink<P_OUT> sink) {
         do { } while (!sink.cancellationRequested() && spliterator.tryAdvance(sink));
     }
 
+    /**
+     * 根据指定的大小 构建 node 容器
+     * @param exactSizeIfKnown if {@literal >=0}, then a node builder will be
+     * created that has a fixed capacity of at most sizeIfKnown elements. If
+     * {@literal < 0}, then the node builder has an unfixed capacity. A fixed
+     * capacity node builder will throw exceptions if an element is added after
+     * builder has reached capacity, or is built before the builder has reached
+     * capacity.
+     *
+     * @param generator the array generator to be used to create instances of a
+     * T[] array. For implementations supporting primitive nodes, this parameter
+     * may be ignored.
+     * @return
+     */
     @Override
     final Node.Builder<P_OUT> makeNodeBuilder(long exactSizeIfKnown, IntFunction<P_OUT[]> generator) {
         return Nodes.builder(exactSizeIfKnown, generator);
@@ -150,6 +182,10 @@ abstract class ReferencePipeline<P_IN, P_OUT>
 
     // BaseStream
 
+    /**
+     * 将 split 封装成 普通的迭代器对象
+     * @return
+     */
     @Override
     public final Iterator<P_OUT> iterator() {
         return Spliterators.iterator(spliterator());
@@ -160,10 +196,15 @@ abstract class ReferencePipeline<P_IN, P_OUT>
 
     // Stateless intermediate operations from Stream
 
+    /**
+     * 返回一个 无序流
+     * @return
+     */
     @Override
     public Stream<P_OUT> unordered() {
         if (!isOrdered())
             return this;
+        // 返回一个 无状态 Stream 对象 wrapSink 不做任何处理  新流对象将自身作为 上游
         return new StatelessOp<P_OUT, P_OUT>(this, StreamShape.REFERENCE, StreamOpFlag.NOT_ORDERED) {
             @Override
             Sink<P_OUT> opWrapSink(int flags, Sink<P_OUT> sink) {
@@ -172,9 +213,18 @@ abstract class ReferencePipeline<P_IN, P_OUT>
         };
     }
 
+    /**
+     * 使用谓语 对内部元素进行过滤
+     * @param predicate a <a href="package-summary.html#NonInterference">non-interfering</a>,
+     *                  <a href="package-summary.html#Statelessness">stateless</a>
+     *                  predicate to apply to each element to determine if it
+     *                  should be included
+     * @return
+     */
     @Override
     public final Stream<P_OUT> filter(Predicate<? super P_OUT> predicate) {
         Objects.requireNonNull(predicate);
+        // 应该是代表该流被过滤后 就无法确定长度了
         return new StatelessOp<P_OUT, P_OUT>(this, StreamShape.REFERENCE,
                                      StreamOpFlag.NOT_SIZED) {
             @Override
@@ -185,6 +235,10 @@ abstract class ReferencePipeline<P_IN, P_OUT>
                         downstream.begin(-1);
                     }
 
+                    /**
+                     * 该 sink 对象在接受元素前 要先满足谓语条件
+                     * @param u
+                     */
                     @Override
                     public void accept(P_OUT u) {
                         if (predicate.test(u))
@@ -204,6 +258,10 @@ abstract class ReferencePipeline<P_IN, P_OUT>
             @Override
             Sink<P_OUT> opWrapSink(int flags, Sink<R> sink) {
                 return new Sink.ChainedReference<P_OUT, R>(sink) {
+                    /**
+                     * 接受的元素 会使用 mapper函数进行处理
+                     * @param u
+                     */
                     @Override
                     public void accept(P_OUT u) {
                         downstream.accept(mapper.apply(u));
@@ -264,6 +322,15 @@ abstract class ReferencePipeline<P_IN, P_OUT>
         };
     }
 
+    /**
+     * 将单个元素转换成新的流
+     * @param mapper a <a href="package-summary.html#NonInterference">non-interfering</a>,
+     *               <a href="package-summary.html#Statelessness">stateless</a>
+     *               function to apply to each element which produces a stream
+     *               of new values
+     * @param <R>
+     * @return
+     */
     @Override
     public final <R> Stream<R> flatMap(Function<? super P_OUT, ? extends Stream<? extends R>> mapper) {
         Objects.requireNonNull(mapper);
@@ -280,9 +347,11 @@ abstract class ReferencePipeline<P_IN, P_OUT>
 
                     @Override
                     public void accept(P_OUT u) {
+                        // 首先使用map 将元素转换成一个新的 stream
                         try (Stream<? extends R> result = mapper.apply(u)) {
                             // We can do better that this too; optimize for depth=0 case and just grab spliterator and forEach it
                             if (result != null)
+                                // 返回一个顺序的等效流后 使用下游对象 处理每个新元素
                                 result.sequential().forEach(downstream);
                         }
                     }
@@ -375,6 +444,13 @@ abstract class ReferencePipeline<P_IN, P_OUT>
         };
     }
 
+    /**
+     * 瞥看某个元素
+     * @param action a <a href="package-summary.html#NonInterference">
+     *                 non-interfering</a> action to perform on the elements as
+     *                 they are consumed from the stream
+     * @return
+     */
     @Override
     public final Stream<P_OUT> peek(Consumer<? super P_OUT> action) {
         Objects.requireNonNull(action);
@@ -385,6 +461,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
                 return new Sink.ChainedReference<P_OUT, P_OUT>(sink) {
                     @Override
                     public void accept(P_OUT u) {
+                        // 相当于就是直接将元素 传到下游
                         action.accept(u);
                         downstream.accept(u);
                     }
@@ -427,8 +504,12 @@ abstract class ReferencePipeline<P_IN, P_OUT>
             return SliceOps.makeRef(this, n, -1);
     }
 
-    // Terminal operations from Stream
+    // Terminal operations from Stream  针对流的终止操作
 
+    /**
+     * evaluate 实现 就是委托给 生成的 TerminalOp 对象
+     * @param action a <a href="package-summary.html#NonInterference">
+     */
     @Override
     public void forEach(Consumer<? super P_OUT> action) {
         evaluate(ForEachOps.makeRef(action, false));
@@ -439,6 +520,13 @@ abstract class ReferencePipeline<P_IN, P_OUT>
         evaluate(ForEachOps.makeRef(action, true));
     }
 
+    /**
+     * 将流对象转换成 数组对象
+     * @param generator a function which produces a new array of the desired
+     *                  type and the provided length
+     * @param <A>
+     * @return
+     */
     @Override
     @SuppressWarnings("unchecked")
     public final <A> A[] toArray(IntFunction<A[]> generator) {
@@ -451,6 +539,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
         // super type of U an ArrayStoreException will be thrown.
         @SuppressWarnings("rawtypes")
         IntFunction rawGenerator = (IntFunction) generator;
+        // 将内部元素通过forkjoin 框架 设置到数组中
         return (A[]) Nodes.flatten(evaluateToArrayNode(rawGenerator), rawGenerator)
                               .asArray(rawGenerator);
     }
@@ -459,6 +548,8 @@ abstract class ReferencePipeline<P_IN, P_OUT>
     public final Object[] toArray() {
         return toArray(Object[]::new);
     }
+
+    // 以下实现都是依赖于 对应的 Ops 对象
 
     @Override
     public final boolean anyMatch(Predicate<? super P_OUT> predicate) {
@@ -500,20 +591,32 @@ abstract class ReferencePipeline<P_IN, P_OUT>
         return evaluate(ReduceOps.makeRef(identity, accumulator, combiner));
     }
 
+    /**
+     * Collector 内部维护了 几个核心的函数对象 该方法代表将流转换成对应的容器对象
+     * @param collector the {@code Collector} describing the reduction
+     * @param <R>
+     * @param <A>
+     * @return
+     */
     @Override
     @SuppressWarnings("unchecked")
     public final <R, A> R collect(Collector<? super P_OUT, A, R> collector) {
         A container;
         if (isParallel()
                 && (collector.characteristics().contains(Collector.Characteristics.CONCURRENT))
+                // 要求是 无序的才方便 并行执行
                 && (!isOrdered() || collector.characteristics().contains(Collector.Characteristics.UNORDERED))) {
+            // 通过supplier 构建容器对象 对应到 ArrayList::new
             container = collector.supplier().get();
             BiConsumer<A, ? super P_OUT> accumulator = collector.accumulator();
+            // 针对每个元素 都会触发 将元素添加到容器中
             forEach(u -> accumulator.accept(container, u));
         }
         else {
+            // 使用reduce 构建模板???
             container = evaluate(ReduceOps.makeRef(collector));
         }
+        // 是否可以忽略 finisher 函数
         return collector.characteristics().contains(Collector.Characteristics.IDENTITY_FINISH)
                ? (R) container
                : collector.finisher().apply(container);
@@ -528,6 +631,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
 
     @Override
     public final Optional<P_OUT> max(Comparator<? super P_OUT> comparator) {
+        // 传入一个 比较获取大值的函数 reduce 代表每2个元素 执行对应的函数
         return reduce(BinaryOperator.maxBy(comparator));
     }
 
@@ -551,6 +655,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
      * @param <E_IN> type of elements in the upstream source
      * @param <E_OUT> type of elements in produced by this stage
      * @since 1.8
+     * pipeline 可以是链式结构 Head 代表一个特殊的链式对象
      */
     static class Head<E_IN, E_OUT> extends ReferencePipeline<E_IN, E_OUT> {
         /**
@@ -617,6 +722,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
      * @param <E_IN> type of elements in the upstream source
      * @param <E_OUT> type of elements in produced by this stage
      * @since 1.8
+     * 代表一个 无状态流对象
      */
     abstract static class StatelessOp<E_IN, E_OUT>
             extends ReferencePipeline<E_IN, E_OUT> {
@@ -647,6 +753,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
      * @param <E_IN> type of elements in the upstream source
      * @param <E_OUT> type of elements in produced by this stage
      * @since 1.8
+     * 一个 有状态的操作对象
      */
     abstract static class StatefulOp<E_IN, E_OUT>
             extends ReferencePipeline<E_IN, E_OUT> {

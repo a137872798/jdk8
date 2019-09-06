@@ -244,8 +244,9 @@ interface Sink<T> extends Consumer<T> {
      * {@code Sink} of unknown input shape and produces a {@code Sink<T>}.  The
      * implementation of the {@code accept()} method must call the correct
      * {@code accept()} method on the downstream {@code Sink}.
-     * Sink 的骨架类 Sink 通常是一组链式对象 每个 Sink 会将接收到的元素 传递到下游
+     * Sink 的骨架类  Sink 会将接收到的元素 传递到下游
      * 子类 需要重写 Consumer.accept 方法 该方法是从 Sink 继承来的
+     * 可以看作是 一个过滤器 sink 是目的地 通过使用 ChainedRef 包装后 元素首先要过这层才能到达下游
      */
     static abstract class ChainedReference<T, E_OUT> implements Sink<T> {
 

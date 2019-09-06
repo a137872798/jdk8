@@ -346,11 +346,14 @@ final class Nodes {
                 throw new IllegalArgumentException(BAD_SIZE);
             // 根据长度 生成对应的容器对象
             P_OUT[] array = generator.apply((int) size);
+            // invoke 是 forkJoin 的方法
             new SizedCollectorTask.OfRef<>(spliterator, helper, array).invoke();
+            // 这里应该是处理完任务后 array 已经被填充了 所以就设置 结果
             return node(array);
         } else {
-            // 代表没有获取到长度信息
+            // 代表没有获取到长度信息 有什么区别吗 内部 构建容器的 size 还是通过迭代器获取的啊 上面生成的 SizedCollectorTask 有 targetSize 的概念
             Node<P_OUT> node = new CollectorTask.OfRef<>(helper, generator, spliterator).invoke();
+            // 是否要将 树结构平整化
             return flattenTree ? flatten(node, generator) : node;
         }
     }
@@ -485,13 +488,17 @@ final class Nodes {
      * @param node the node to flatten
      * @param generator the array factory used to create array instances
      * @return a flat {@code Node}
+     * 将 ConcNode 节点 平整化 因为 该节点 包含左右节点
      */
     public static <T> Node<T> flatten(Node<T> node, IntFunction<T[]> generator) {
+        // 只有ConcNode 才有 childCount
         if (node.getChildCount() > 0) {
             long size = node.count();
+            // 不是 默认只有 左右节点吗 这个判断啥意思
             if (size >= MAX_ARRAY_SIZE)
                 throw new IllegalArgumentException(BAD_SIZE);
             T[] array = generator.apply((int) size);
+            // 这里只是使用了 基于 数组实现的node
             new ToArrayTask.OfRef<>(node, array, 0).invoke();
             return node(array);
         } else {
@@ -2471,8 +2478,17 @@ final class Nodes {
     @SuppressWarnings("serial")
     private static class CollectorTask<P_IN, P_OUT, T_NODE extends Node<P_OUT>, T_BUILDER extends Node.Builder<P_OUT>>
             extends AbstractTask<P_IN, P_OUT, T_NODE, CollectorTask<P_IN, P_OUT, T_NODE, T_BUILDER>> {
+        /**
+         * 定义了 数据流的行为
+         */
         protected final PipelineHelper<P_OUT> helper;
+        /**
+         * 根据size 信息生成 容器对象
+         */
         protected final LongFunction<T_BUILDER> builderFactory;
+        /**
+         * 接收2个相同类型的元素 并返回相同的结果类型
+         */
         protected final BinaryOperator<T_NODE> concFactory;
 
         CollectorTask(PipelineHelper<P_OUT> helper,
@@ -2485,6 +2501,11 @@ final class Nodes {
             this.concFactory = concFactory;
         }
 
+        /**
+         * 通过指定父类节点 来初始化
+         * @param parent
+         * @param spliterator
+         */
         CollectorTask(CollectorTask<P_IN, P_OUT, T_NODE, T_BUILDER> parent,
                       Spliterator<P_IN> spliterator) {
             super(parent, spliterator);
@@ -2493,6 +2514,12 @@ final class Nodes {
             concFactory = parent.concFactory;
         }
 
+        /**
+         * 使用传入的数据构建相同的 对象
+         * @param spliterator {@code Spliterator} describing the subtree rooted at
+         *        this node, obtained by splitting the parent {@code Spliterator}
+         * @return
+         */
         @Override
         protected CollectorTask<P_IN, P_OUT, T_NODE, T_BUILDER> makeChild(Spliterator<P_IN> spliterator) {
             return new CollectorTask<>(this, spliterator);
@@ -2501,14 +2528,19 @@ final class Nodes {
         @Override
         @SuppressWarnings("unchecked")
         protected T_NODE doLeaf() {
+            // helper.exactOutputSizeIfKnown(split) 代表从迭代器中获取元素 长度 并 通过 factory.apply 构建容器
             T_BUILDER builder = builderFactory.apply(helper.exactOutputSizeIfKnown(spliterator));
+            // 将数据拷贝到生成的 builder 中
             return (T_NODE) helper.wrapAndCopyInto(builder, spliterator).build();
         }
 
         @Override
         public void onCompletion(CountedCompleter<?> caller) {
+            // 判断是否包含子节点
             if (!isLeaf())
+                // 将子节点的结果 整合到 父节点上   默认实现就是 ConcNode 也就是 父节点的LocalResult 可以获取到左右节点的结果
                 setLocalResult(concFactory.apply(leftChild.getLocalResult(), rightChild.getLocalResult()));
+            // 做一些清理工作 帮助GC 回收
             super.onCompletion(caller);
         }
 
@@ -2518,6 +2550,7 @@ final class Nodes {
             OfRef(PipelineHelper<P_OUT> helper,
                   IntFunction<P_OUT[]> generator,
                   Spliterator<P_IN> spliterator) {
+                // concNode 对应到上面的结合函数
                 super(helper, spliterator, s -> builder(s, generator), ConcNode::new);
             }
         }

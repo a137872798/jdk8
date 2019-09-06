@@ -235,7 +235,7 @@ abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,
      * Cancels all tasks which succeed this one in the encounter order.  This
      * includes canceling all the current task's right sibling, as well as the
      * later right siblings of all its parents.
-     * 该方法应该是针对 最左节点调用的??? 因为它的关闭逻辑都是基于 当前节点是
+     * 当前节点不是 最左节点时 会走这个方法
      */
     protected void cancelLaterNodes() {
         // Go up the tree, cancel right siblings of this node and all parents

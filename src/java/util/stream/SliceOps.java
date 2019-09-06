@@ -33,35 +33,40 @@ import java.util.function.IntFunction;
  * that produce subsequences of their input stream.
  *
  * @since 1.8
+ * 分片操作
  */
 final class SliceOps {
 
     // No instances
-    private SliceOps() { }
+    private SliceOps() {
+    }
 
     /**
      * Calculates the sliced size given the current size, number of elements
      * skip, and the number of elements to limit.
      *
-     * @param size the current size
-     * @param skip the number of elements to skip, assumed to be >= 0
-     * @param limit the number of elements to limit, assumed to be >= 0, with
-     *        a value of {@code Long.MAX_VALUE} if there is no limit
-     * @return the sliced size
+     * @param size  the current size   当前长度
+     * @param skip  the number of elements to skip, assumed to be >= 0     跳过的元素
+     * @param limit the number of elements to limit, assumed to be >= 0, with    限制的元素长度
+     *              a value of {@code Long.MAX_VALUE} if there is no limit
+     * @return the sliced size    返回分片长度
      */
     private static long calcSize(long size, long skip, long limit) {
+        // 如果 size < 0 返回 -1  获取 size-skip , limit 中的较小值    limit 就是 分片的限制大小   size - skip 应该就是默认的分片大小
         return size >= 0 ? Math.max(-1, Math.min(size - skip, limit)) : -1;
     }
 
     /**
      * Calculates the slice fence, which is one past the index of the slice
      * range
-     * @param skip the number of elements to skip, assumed to be >= 0
+     *
+     * @param skip  the number of elements to skip, assumed to be >= 0
      * @param limit the number of elements to limit, assumed to be >= 0, with
-     *        a value of {@code Long.MAX_VALUE} if there is no limit
+     *              a value of {@code Long.MAX_VALUE} if there is no limit
      * @return the slice fence.
      */
     private static long calcSliceFence(long skip, long limit) {
+        // skip + limit 代表的是 总长度吧   skip 代表从起点开始 跳过多少元素 之后 总长度 还要 符合limit 的条件 就得出 skip + limit
         long sliceFence = limit >= 0 ? skip + limit : Long.MAX_VALUE;
         // Check for overflow
         return (sliceFence >= 0) ? sliceFence : Long.MAX_VALUE;
@@ -76,11 +81,14 @@ final class SliceOps {
     private static <P_IN> Spliterator<P_IN> sliceSpliterator(StreamShape shape,
                                                              Spliterator<P_IN> s,
                                                              long skip, long limit) {
+        // SUBSIZED 代表 允许分片
         assert s.hasCharacteristics(Spliterator.SUBSIZED);
+        // 计算分片长度
         long sliceFence = calcSliceFence(skip, limit);
         switch (shape) {
             case REFERENCE:
                 return new StreamSpliterators
+                        // 注意传入的参数是   split 总长度 跳过多少 ， 该分片总共允许的长度
                         .SliceSpliterator.OfRef<>(s, skip, sliceFence);
             case INT_VALUE:
                 return (Spliterator<P_IN>) new StreamSpliterators
@@ -105,11 +113,11 @@ final class SliceOps {
      * Appends a "slice" operation to the provided stream.  The slice operation
      * may be may be skip-only, limit-only, or skip-and-limit.
      *
-     * @param <T> the type of both input and output elements
+     * @param <T>      the type of both input and output elements
      * @param upstream a reference stream with element type T
-     * @param skip the number of elements to skip.  Must be >= 0.
-     * @param limit the maximum size of the resulting stream, or -1 if no limit
-     *        is to be imposed
+     * @param skip     the number of elements to skip.  Must be >= 0.
+     * @param limit    the maximum size of the resulting stream, or -1 if no limit
+     *                 is to be imposed
      */
     public static <T> Stream<T> makeRef(AbstractPipeline<?, T, ?> upstream,
                                         long skip, long limit) {
@@ -117,7 +125,16 @@ final class SliceOps {
             throw new IllegalArgumentException("Skip must be non-negative: " + skip);
 
         return new ReferencePipeline.StatefulOp<T, T>(upstream, StreamShape.REFERENCE,
-                                                      flags(limit)) {
+                flags(limit)) {
+
+            /**
+             * 返回一个 无序的 分片迭代器
+             * @param s
+             * @param skip   代表要跳过多少元素
+             * @param limit 代表返回的元素 最多是多少
+             * @param sizeIfKnown
+             * @return
+             */
             Spliterator<T> unorderedSkipLimitSpliterator(Spliterator<T> s,
                                                          long skip, long limit, long sizeIfKnown) {
                 if (skip <= sizeIfKnown) {
@@ -141,8 +158,7 @@ final class SliceOps {
                     return unorderedSkipLimitSpliterator(
                             helper.wrapSpliterator(spliterator),
                             skip, limit, size);
-                }
-                else {
+                } else {
                     // @@@ OOMEs will occur for LongStream.longs().filter(i -> true).limit(n)
                     //     regardless of the value of n
                     //     Need to adjust the target size of splitting for the
@@ -170,7 +186,7 @@ final class SliceOps {
                     Spliterator<P_IN> s = sliceSpliterator(helper.getSourceShape(), spliterator, skip, limit);
                     return Nodes.collect(helper, s, true, generator);
                 } else if (!StreamOpFlag.ORDERED.isKnown(helper.getStreamAndOpFlags())) {
-                    Spliterator<T> s =  unorderedSkipLimitSpliterator(
+                    Spliterator<T> s = unorderedSkipLimitSpliterator(
                             helper.wrapSpliterator(spliterator),
                             skip, limit, size);
                     // Collect using this pipeline, which is empty and therefore
@@ -178,8 +194,7 @@ final class SliceOps {
                     // Note that we cannot create a slice spliterator from
                     // the source spliterator if the pipeline is not SIZED
                     return Nodes.collect(this, s, true, generator);
-                }
-                else {
+                } else {
                     return new SliceTask<>(this, helper, spliterator, generator, skip, limit).
                             invoke();
                 }
@@ -203,8 +218,7 @@ final class SliceOps {
                                 m--;
                                 downstream.accept(t);
                             }
-                        }
-                        else {
+                        } else {
                             n--;
                         }
                     }
@@ -223,9 +237,9 @@ final class SliceOps {
      * operation may be may be skip-only, limit-only, or skip-and-limit.
      *
      * @param upstream An IntStream
-     * @param skip The number of elements to skip.  Must be >= 0.
-     * @param limit The maximum size of the resulting stream, or -1 if no limit
-     *        is to be imposed
+     * @param skip     The number of elements to skip.  Must be >= 0.
+     * @param limit    The maximum size of the resulting stream, or -1 if no limit
+     *                 is to be imposed
      */
     public static IntStream makeInt(AbstractPipeline<?, Integer, ?> upstream,
                                     long skip, long limit) {
@@ -233,7 +247,7 @@ final class SliceOps {
             throw new IllegalArgumentException("Skip must be non-negative: " + skip);
 
         return new IntPipeline.StatefulOp<Integer>(upstream, StreamShape.INT_VALUE,
-                                                   flags(limit)) {
+                flags(limit)) {
             Spliterator.OfInt unorderedSkipLimitSpliterator(
                     Spliterator.OfInt s, long skip, long limit, long sizeIfKnown) {
                 if (skip <= sizeIfKnown) {
@@ -258,8 +272,7 @@ final class SliceOps {
                     return unorderedSkipLimitSpliterator(
                             (Spliterator.OfInt) helper.wrapSpliterator(spliterator),
                             skip, limit, size);
-                }
-                else {
+                } else {
                     return new SliceTask<>(this, helper, spliterator, Integer[]::new, skip, limit).
                             invoke().spliterator();
                 }
@@ -279,7 +292,7 @@ final class SliceOps {
                     Spliterator<P_IN> s = sliceSpliterator(helper.getSourceShape(), spliterator, skip, limit);
                     return Nodes.collectInt(helper, s, true);
                 } else if (!StreamOpFlag.ORDERED.isKnown(helper.getStreamAndOpFlags())) {
-                    Spliterator.OfInt s =  unorderedSkipLimitSpliterator(
+                    Spliterator.OfInt s = unorderedSkipLimitSpliterator(
                             (Spliterator.OfInt) helper.wrapSpliterator(spliterator),
                             skip, limit, size);
                     // Collect using this pipeline, which is empty and therefore
@@ -287,8 +300,7 @@ final class SliceOps {
                     // Note that we cannot create a slice spliterator from
                     // the source spliterator if the pipeline is not SIZED
                     return Nodes.collectInt(this, s, true);
-                }
-                else {
+                } else {
                     return new SliceTask<>(this, helper, spliterator, generator, skip, limit).
                             invoke();
                 }
@@ -312,8 +324,7 @@ final class SliceOps {
                                 m--;
                                 downstream.accept(t);
                             }
-                        }
-                        else {
+                        } else {
                             n--;
                         }
                     }
@@ -332,9 +343,9 @@ final class SliceOps {
      * operation may be may be skip-only, limit-only, or skip-and-limit.
      *
      * @param upstream A LongStream
-     * @param skip The number of elements to skip.  Must be >= 0.
-     * @param limit The maximum size of the resulting stream, or -1 if no limit
-     *        is to be imposed
+     * @param skip     The number of elements to skip.  Must be >= 0.
+     * @param limit    The maximum size of the resulting stream, or -1 if no limit
+     *                 is to be imposed
      */
     public static LongStream makeLong(AbstractPipeline<?, Long, ?> upstream,
                                       long skip, long limit) {
@@ -342,7 +353,7 @@ final class SliceOps {
             throw new IllegalArgumentException("Skip must be non-negative: " + skip);
 
         return new LongPipeline.StatefulOp<Long>(upstream, StreamShape.LONG_VALUE,
-                                                 flags(limit)) {
+                flags(limit)) {
             Spliterator.OfLong unorderedSkipLimitSpliterator(
                     Spliterator.OfLong s, long skip, long limit, long sizeIfKnown) {
                 if (skip <= sizeIfKnown) {
@@ -367,8 +378,7 @@ final class SliceOps {
                     return unorderedSkipLimitSpliterator(
                             (Spliterator.OfLong) helper.wrapSpliterator(spliterator),
                             skip, limit, size);
-                }
-                else {
+                } else {
                     return new SliceTask<>(this, helper, spliterator, Long[]::new, skip, limit).
                             invoke().spliterator();
                 }
@@ -388,7 +398,7 @@ final class SliceOps {
                     Spliterator<P_IN> s = sliceSpliterator(helper.getSourceShape(), spliterator, skip, limit);
                     return Nodes.collectLong(helper, s, true);
                 } else if (!StreamOpFlag.ORDERED.isKnown(helper.getStreamAndOpFlags())) {
-                    Spliterator.OfLong s =  unorderedSkipLimitSpliterator(
+                    Spliterator.OfLong s = unorderedSkipLimitSpliterator(
                             (Spliterator.OfLong) helper.wrapSpliterator(spliterator),
                             skip, limit, size);
                     // Collect using this pipeline, which is empty and therefore
@@ -396,8 +406,7 @@ final class SliceOps {
                     // Note that we cannot create a slice spliterator from
                     // the source spliterator if the pipeline is not SIZED
                     return Nodes.collectLong(this, s, true);
-                }
-                else {
+                } else {
                     return new SliceTask<>(this, helper, spliterator, generator, skip, limit).
                             invoke();
                 }
@@ -421,8 +430,7 @@ final class SliceOps {
                                 m--;
                                 downstream.accept(t);
                             }
-                        }
-                        else {
+                        } else {
                             n--;
                         }
                     }
@@ -441,9 +449,9 @@ final class SliceOps {
      * operation may be may be skip-only, limit-only, or skip-and-limit.
      *
      * @param upstream A DoubleStream
-     * @param skip The number of elements to skip.  Must be >= 0.
-     * @param limit The maximum size of the resulting stream, or -1 if no limit
-     *        is to be imposed
+     * @param skip     The number of elements to skip.  Must be >= 0.
+     * @param limit    The maximum size of the resulting stream, or -1 if no limit
+     *                 is to be imposed
      */
     public static DoubleStream makeDouble(AbstractPipeline<?, Double, ?> upstream,
                                           long skip, long limit) {
@@ -451,7 +459,7 @@ final class SliceOps {
             throw new IllegalArgumentException("Skip must be non-negative: " + skip);
 
         return new DoublePipeline.StatefulOp<Double>(upstream, StreamShape.DOUBLE_VALUE,
-                                                     flags(limit)) {
+                flags(limit)) {
             Spliterator.OfDouble unorderedSkipLimitSpliterator(
                     Spliterator.OfDouble s, long skip, long limit, long sizeIfKnown) {
                 if (skip <= sizeIfKnown) {
@@ -476,8 +484,7 @@ final class SliceOps {
                     return unorderedSkipLimitSpliterator(
                             (Spliterator.OfDouble) helper.wrapSpliterator(spliterator),
                             skip, limit, size);
-                }
-                else {
+                } else {
                     return new SliceTask<>(this, helper, spliterator, Double[]::new, skip, limit).
                             invoke().spliterator();
                 }
@@ -497,7 +504,7 @@ final class SliceOps {
                     Spliterator<P_IN> s = sliceSpliterator(helper.getSourceShape(), spliterator, skip, limit);
                     return Nodes.collectDouble(helper, s, true);
                 } else if (!StreamOpFlag.ORDERED.isKnown(helper.getStreamAndOpFlags())) {
-                    Spliterator.OfDouble s =  unorderedSkipLimitSpliterator(
+                    Spliterator.OfDouble s = unorderedSkipLimitSpliterator(
                             (Spliterator.OfDouble) helper.wrapSpliterator(spliterator),
                             skip, limit, size);
                     // Collect using this pipeline, which is empty and therefore
@@ -505,8 +512,7 @@ final class SliceOps {
                     // Note that we cannot create a slice spliterator from
                     // the source spliterator if the pipeline is not SIZED
                     return Nodes.collectDouble(this, s, true);
-                }
-                else {
+                } else {
                     return new SliceTask<>(this, helper, spliterator, generator, skip, limit).
                             invoke();
                 }
@@ -530,8 +536,7 @@ final class SliceOps {
                                 m--;
                                 downstream.accept(t);
                             }
-                        }
-                        else {
+                        } else {
                             n--;
                         }
                     }
@@ -552,7 +557,7 @@ final class SliceOps {
     /**
      * {@code ForkJoinTask} implementing slice computation.
      *
-     * @param <P_IN> Input element type to the stream pipeline
+     * @param <P_IN>  Input element type to the stream pipeline
      * @param <P_OUT> Output element type from the stream pipeline
      */
     @SuppressWarnings("serial")
@@ -599,18 +604,17 @@ final class SliceOps {
         protected final Node<P_OUT> doLeaf() {
             if (isRoot()) {
                 long sizeIfKnown = StreamOpFlag.SIZED.isPreserved(op.sourceOrOpFlags)
-                                   ? op.exactOutputSizeIfKnown(spliterator)
-                                   : -1;
+                        ? op.exactOutputSizeIfKnown(spliterator)
+                        : -1;
                 final Node.Builder<P_OUT> nb = op.makeNodeBuilder(sizeIfKnown, generator);
                 Sink<P_OUT> opSink = op.opWrapSink(helper.getStreamAndOpFlags(), nb);
                 helper.copyIntoWithCancel(helper.wrapSink(opSink), spliterator);
                 // There is no need to truncate since the op performs the
                 // skipping and limiting of elements
                 return nb.build();
-            }
-            else {
+            } else {
                 Node<P_OUT> node = helper.wrapAndCopyInto(helper.makeNodeBuilder(-1, generator),
-                                                          spliterator).build();
+                        spliterator).build();
                 thisNodeSize = node.count();
                 completed = true;
                 spliterator = null;
@@ -626,22 +630,21 @@ final class SliceOps {
                 if (canceled) {
                     thisNodeSize = 0;
                     result = getEmptyResult();
-                }
-                else if (thisNodeSize == 0)
+                } else if (thisNodeSize == 0)
                     result = getEmptyResult();
                 else if (leftChild.thisNodeSize == 0)
                     result = rightChild.getLocalResult();
                 else {
                     result = Nodes.conc(op.getOutputShape(),
-                                        leftChild.getLocalResult(), rightChild.getLocalResult());
+                            leftChild.getLocalResult(), rightChild.getLocalResult());
                 }
                 setLocalResult(isRoot() ? doTruncate(result) : result);
                 completed = true;
             }
             if (targetSize >= 0
-                && !isRoot()
-                && isLeftCompleted(targetOffset + targetSize))
-                    cancelLaterNodes();
+                    && !isRoot()
+                    && isLeftCompleted(targetOffset + targetSize))
+                cancelLaterNodes();
 
             super.onCompletion(caller);
         }
@@ -664,7 +667,7 @@ final class SliceOps {
          *
          * @param target the target size
          * @return true if the number of elements is greater than or equal to
-         *         the target size, otherwise false.
+         * the target size, otherwise false.
          */
         private boolean isLeftCompleted(long target) {
             long size = completed ? thisNodeSize : completedSize(target);
@@ -704,8 +707,7 @@ final class SliceOps {
                 if (left == null || right == null) {
                     // must be completed
                     return thisNodeSize;
-                }
-                else {
+                } else {
                     long leftSize = left.completedSize(target);
                     return (leftSize >= target) ? leftSize : leftSize + right.completedSize(target);
                 }
