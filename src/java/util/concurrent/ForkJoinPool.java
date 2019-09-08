@@ -165,6 +165,7 @@ import java.security.Permissions;
  *
  * @since 1.7
  * @author Doug Lea
+ * forkJoin 的专用线程池
  */
 @sun.misc.Contended
 public class ForkJoinPool extends AbstractExecutorService {
@@ -709,6 +710,7 @@ public class ForkJoinPool extends AbstractExecutorService {
      * A {@code ForkJoinWorkerThreadFactory} must be defined and used
      * for {@code ForkJoinWorkerThread} subclasses that extend base
      * functionality or initialize threads with different contexts.
+     * forkJoin 专用的线程池工厂
      */
     public static interface ForkJoinWorkerThreadFactory {
         /**

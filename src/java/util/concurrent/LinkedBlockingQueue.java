@@ -118,6 +118,7 @@ public class LinkedBlockingQueue<E> extends AbstractQueue<E>
 
     /**
      * Linked list node class
+     * 最基本的 节点对象
      */
     static class Node<E> {
         E item;
@@ -137,17 +138,20 @@ public class LinkedBlockingQueue<E> extends AbstractQueue<E>
     private final int capacity;
 
     /** Current number of elements */
+    // 记录当前节点数
     private final AtomicInteger count = new AtomicInteger();
 
     /**
      * Head of linked list.
      * Invariant: head.item == null
+     * 头节点
      */
     transient Node<E> head;
 
     /**
      * Tail of linked list.
      * Invariant: last.next == null
+     * 尾节点
      */
     private transient Node<E> last;
 
@@ -166,8 +170,10 @@ public class LinkedBlockingQueue<E> extends AbstractQueue<E>
     /**
      * Signals a waiting take. Called only from put/offer (which do not
      * otherwise ordinarily lock takeLock.)
+     * 通知可以拉取元素了
      */
     private void signalNotEmpty() {
+        // 确保只有一个线程进入
         final ReentrantLock takeLock = this.takeLock;
         takeLock.lock();
         try {
@@ -179,6 +185,7 @@ public class LinkedBlockingQueue<E> extends AbstractQueue<E>
 
     /**
      * Signals a waiting put. Called only from take/poll.
+     * 通知可以填充元素
      */
     private void signalNotFull() {
         final ReentrantLock putLock = this.putLock;
@@ -198,6 +205,7 @@ public class LinkedBlockingQueue<E> extends AbstractQueue<E>
     private void enqueue(Node<E> node) {
         // assert putLock.isHeldByCurrentThread();
         // assert last.next == null;
+        // 将最后一个节点指向新节点
         last = last.next = node;
     }
 

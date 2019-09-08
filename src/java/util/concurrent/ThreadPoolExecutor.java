@@ -315,6 +315,7 @@ import java.util.*;
  *
  * @since 1.5
  * @author Doug Lea
+ * 线程池对象
  */
 public class ThreadPoolExecutor extends AbstractExecutorService {
     /**
@@ -373,15 +374,32 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * we can only terminate if, after seeing that it is empty, we see
      * that workerCount is 0 (which sometimes entails a recheck -- see
      * below).
+     * 标记当前状态
      */
     private final AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
+    /**
+     * 29
+     */
     private static final int COUNT_BITS = Integer.SIZE - 3;
     private static final int CAPACITY   = (1 << COUNT_BITS) - 1;
 
     // runState is stored in the high-order bits
+    // 一些标识线程池状态的常量
+    /**
+     * 正在运行
+     */
     private static final int RUNNING    = -1 << COUNT_BITS;
+    /**
+     * 被终止
+     */
     private static final int SHUTDOWN   =  0 << COUNT_BITS;
+    /**
+     * 线程池当前处在停止状态
+     */
     private static final int STOP       =  1 << COUNT_BITS;
+    /**
+     * 整理???
+     */
     private static final int TIDYING    =  2 << COUNT_BITS;
     private static final int TERMINATED =  3 << COUNT_BITS;
 

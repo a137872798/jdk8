@@ -103,20 +103,33 @@ package java.util.concurrent;
  *     if (result != null)
  *         use(result);
  * }}</pre>
+ * 该对象具备 收集已完成任务的 能力
  */
 public class ExecutorCompletionService<V> implements CompletionService<V> {
+    /**
+     * 该接口 接受一个 runnable 并处理
+     */
     private final Executor executor;
+    /**
+     * 线程池对象
+     */
     private final AbstractExecutorService aes;
+    /**
+     * 阻塞队列 该队列好像是用来存放已完成的 任务对象
+     */
     private final BlockingQueue<Future<V>> completionQueue;
 
     /**
      * FutureTask extension to enqueue upon completion
+     * 拓展了 futuretask 对象
      */
     private class QueueingFuture extends FutureTask<Void> {
         QueueingFuture(RunnableFuture<V> task) {
+            // 代表本future 正常执行完后 result == null
             super(task, null);
             this.task = task;
         }
+        // 当任务完成时 将结果存入到 task 中 done会在父类以任何情况结束时触发 包含 异常 关闭 正常完成 打断
         protected void done() { completionQueue.add(task); }
         private final Future<V> task;
     }
@@ -125,6 +138,7 @@ public class ExecutorCompletionService<V> implements CompletionService<V> {
         if (aes == null)
             return new FutureTask<V>(task);
         else
+            // aes 有可能是 ForkJoin 这样 就要使用重写的方法 返回特殊的 task 对象
             return aes.newTaskFor(task);
     }
 
@@ -142,6 +156,7 @@ public class ExecutorCompletionService<V> implements CompletionService<V> {
      *
      * @param executor the executor to use
      * @throws NullPointerException if executor is {@code null}
+     * 通过一个线程池对象来初始化 该对象
      */
     public ExecutorCompletionService(Executor executor) {
         if (executor == null)
@@ -149,6 +164,7 @@ public class ExecutorCompletionService<V> implements CompletionService<V> {
         this.executor = executor;
         this.aes = (executor instanceof AbstractExecutorService) ?
             (AbstractExecutorService) executor : null;
+        // 注意该队列使用了 阻塞队列
         this.completionQueue = new LinkedBlockingQueue<Future<V>>();
     }
 
@@ -178,6 +194,7 @@ public class ExecutorCompletionService<V> implements CompletionService<V> {
     public Future<V> submit(Callable<V> task) {
         if (task == null) throw new NullPointerException();
         RunnableFuture<V> f = newTaskFor(task);
+        // 将future 对象封装成 QueueingFuture 对象 这样在 完成任务时就会将结果填充到 队列中
         executor.execute(new QueueingFuture(f));
         return f;
     }

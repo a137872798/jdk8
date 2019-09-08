@@ -57,6 +57,7 @@ package java.util.concurrent;
  * <a href="package-summary.html#MemoryVisibility"><i>happen-before</i></a>
  * actions taken by that task, which in turn <i>happen-before</i>
  * actions following a successful return from the corresponding {@code take()}.
+ * 异步服务对象 提交一个任务 后 返回一个future 对象 通过调用future 的相关方法返回结果
  */
 public interface CompletionService<V> {
     /**
@@ -69,6 +70,7 @@ public interface CompletionService<V> {
      * @throws RejectedExecutionException if the task cannot be
      *         scheduled for execution
      * @throws NullPointerException if the task is null
+     * 提交一个 task 任务 并返回一个 future 对象
      */
     Future<V> submit(Callable<V> task);
 
