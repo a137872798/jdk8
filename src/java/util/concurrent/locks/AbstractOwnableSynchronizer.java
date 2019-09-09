@@ -46,6 +46,7 @@ package java.util.concurrent.locks;
  *
  * @since 1.6
  * @author Doug Lea
+ * AQS 的基类
  */
 public abstract class AbstractOwnableSynchronizer
     implements java.io.Serializable {
@@ -60,6 +61,7 @@ public abstract class AbstractOwnableSynchronizer
 
     /**
      * The current owner of exclusive mode synchronization.
+     *独占模式当前的所有者
      */
     private transient Thread exclusiveOwnerThread;
 
