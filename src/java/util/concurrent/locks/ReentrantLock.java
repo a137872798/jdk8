@@ -102,10 +102,14 @@ import java.util.Collection;
  *
  * @since 1.5
  * @author Doug Lea
+ * 可重入锁
  */
 public class ReentrantLock implements Lock, java.io.Serializable {
     private static final long serialVersionUID = 7373984872572414699L;
     /** Synchronizer providing all implementation mechanics */
+    /**
+     * 内置一个 基于 AQS 的 同步 队列
+     */
     private final Sync sync;
 
     /**
@@ -125,16 +129,22 @@ public class ReentrantLock implements Lock, java.io.Serializable {
         /**
          * Performs non-fair tryLock.  tryAcquire is implemented in
          * subclasses, but both need nonfair try for trylock method.
+         * 使用 非公平锁
          */
         final boolean nonfairTryAcquire(int acquires) {
+            // 获取当前线程对象
             final Thread current = Thread.currentThread();
+            // 获取状态信息  aqs本身基本没有使用到 state 这个属性 该属性是给用户自己定义的
             int c = getState();
+            // 应该是代表 重入次数吧
             if (c == 0) {
+                // 尝试将当前状态 修改为给定的 acq cas 成功时设置 独占线程 只有从 0 变成1 的那次 才算真正 抢占该锁 否则 只是单纯增加 重入次数
                 if (compareAndSetState(0, acquires)) {
                     setExclusiveOwnerThread(current);
                     return true;
                 }
             }
+            // 增加充入次数 因为是单线程 触发 所以不需要 CAS 等操作
             else if (current == getExclusiveOwnerThread()) {
                 int nextc = c + acquires;
                 if (nextc < 0) // overflow
@@ -142,11 +152,19 @@ public class ReentrantLock implements Lock, java.io.Serializable {
                 setState(nextc);
                 return true;
             }
+            // 其余情况 代表获取锁失败
             return false;
         }
 
+        /**
+         * 释放 指定的次数 对于可重入锁 每次解锁 只会减少1
+         * @param releases
+         * @return
+         */
         protected final boolean tryRelease(int releases) {
+            // 代表剩余次数
             int c = getState() - releases;
+            // 线程异常
             if (Thread.currentThread() != getExclusiveOwnerThread())
                 throw new IllegalMonitorStateException();
             boolean free = false;
@@ -155,21 +173,34 @@ public class ReentrantLock implements Lock, java.io.Serializable {
                 setExclusiveOwnerThread(null);
             }
             setState(c);
+            // 代表 真正解放成功
             return free;
         }
 
+        /**
+         * 判断 当前线程 是否是锁的持有者
+         * @return
+         */
         protected final boolean isHeldExclusively() {
             // While we must in general read state before owner,
             // we don't need to do so to check if current thread is owner
             return getExclusiveOwnerThread() == Thread.currentThread();
         }
 
+        /**
+         * 创建条件对象
+         * @return
+         */
         final ConditionObject newCondition() {
             return new ConditionObject();
         }
 
         // Methods relayed from outer class
 
+        /**
+         * 获取锁的持有者
+         * @return
+         */
         final Thread getOwner() {
             return getState() == 0 ? null : getExclusiveOwnerThread();
         }
@@ -194,6 +225,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
 
     /**
      * Sync object for non-fair locks
+     * 非公平锁
      */
     static final class NonfairSync extends Sync {
         private static final long serialVersionUID = 7316153563782823691L;
@@ -201,11 +233,16 @@ public class ReentrantLock implements Lock, java.io.Serializable {
         /**
          * Performs lock.  Try immediate barge, backing up to normal
          * acquire on failure.
+         * 上锁
          */
         final void lock() {
+            // cas 操作枷锁 成功的情况 设置 独占锁   非公平锁的实现 就是外部可以通过这个入口 来抢占获取锁
+            // 公平锁 则必须通过 acquire 将 线程添加到 队列中 进行竞争
             if (compareAndSetState(0, 1))
                 setExclusiveOwnerThread(Thread.currentThread());
             else
+                // 失败的情况下 尝试获取锁
+                // 内部会转发给 tryAcquire
                 acquire(1);
         }
 
@@ -220,6 +257,9 @@ public class ReentrantLock implements Lock, java.io.Serializable {
     static final class FairSync extends Sync {
         private static final long serialVersionUID = -3000897897090466540L;
 
+        /**
+         * 这里就没有额外的入口了  必须严格通过 acquire
+         */
         final void lock() {
             acquire(1);
         }
@@ -238,6 +278,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
                     return true;
                 }
             }
+            // 增加重入次数
             else if (current == getExclusiveOwnerThread()) {
                 int nextc = c + acquires;
                 if (nextc < 0)

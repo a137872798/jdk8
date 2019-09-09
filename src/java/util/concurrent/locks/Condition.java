@@ -175,6 +175,7 @@ import java.util.Date;
  *
  * @since 1.5
  * @author Doug Lea
+ * 条件接口
  */
 public interface Condition {
 
@@ -227,6 +228,7 @@ public interface Condition {
      *
      * @throws InterruptedException if the current thread is interrupted
      *         (and interruption of thread suspension is supported)
+     *         使得当前线程暂停 只有满足了给定条件才能重新启动
      */
     void await() throws InterruptedException;
 
@@ -263,6 +265,7 @@ public interface Condition {
      * the case and if not, how to respond. Typically, an exception will be
      * thrown (such as {@link IllegalMonitorStateException}) and the
      * implementation must document that fact.
+     * 阻塞当前线程且处在不可打断的状态
      */
     void awaitUninterruptibly();
 
@@ -354,6 +357,7 @@ public interface Condition {
      *         indicates that no time remains.
      * @throws InterruptedException if the current thread is interrupted
      *         (and interruption of thread suspension is supported)
+     *         阻塞给定的时间 可以允许打断
      */
     long awaitNanos(long nanosTimeout) throws InterruptedException;
 
@@ -369,6 +373,7 @@ public interface Condition {
      *         before return from the method, else {@code true}
      * @throws InterruptedException if the current thread is interrupted
      *         (and interruption of thread suspension is supported)
+     *         阻塞给定的时间
      */
     boolean await(long time, TimeUnit unit) throws InterruptedException;
 
@@ -446,6 +451,7 @@ public interface Condition {
      *         {@code true}
      * @throws InterruptedException if the current thread is interrupted
      *         (and interruption of thread suspension is supported)
+     *         阻塞直到 deadline
      */
     boolean awaitUntil(Date deadline) throws InterruptedException;
 
@@ -464,6 +470,7 @@ public interface Condition {
      * document this precondition and any actions taken if the lock is
      * not held. Typically, an exception such as {@link
      * IllegalMonitorStateException} will be thrown.
+     * 唤醒阻塞的线程
      */
     void signal();
 
@@ -482,6 +489,7 @@ public interface Condition {
      * document this precondition and any actions taken if the lock is
      * not held. Typically, an exception such as {@link
      * IllegalMonitorStateException} will be thrown.
+     * 唤醒所有阻塞的线程
      */
     void signalAll();
 }
