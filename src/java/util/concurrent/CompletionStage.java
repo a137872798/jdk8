@@ -122,6 +122,7 @@ import java.util.concurrent.Executor;
  *
  * @author Doug Lea
  * @since 1.8
+ * 当某一步操作结束后 调用之后的函数
  */
 public interface CompletionStage<T> {
 
@@ -137,6 +138,7 @@ public interface CompletionStage<T> {
      * the returned CompletionStage
      * @param <U> the function's return type
      * @return the new CompletionStage
+     * 当某个步骤完成时 触发下一步  接受T 类型 返回 U 类型
      */
     public <U> CompletionStage<U> thenApply(Function<? super T,? extends U> fn);
 
@@ -153,6 +155,7 @@ public interface CompletionStage<T> {
      * the returned CompletionStage
      * @param <U> the function's return type
      * @return the new CompletionStage
+     * 异步之后 某个步骤
      */
     public <U> CompletionStage<U> thenApplyAsync
         (Function<? super T,? extends U> fn);
@@ -170,6 +173,7 @@ public interface CompletionStage<T> {
      * @param executor the executor to use for asynchronous execution
      * @param <U> the function's return type
      * @return the new CompletionStage
+     * 使用线程池 执行异步处理
      */
     public <U> CompletionStage<U> thenApplyAsync
         (Function<? super T,? extends U> fn,
@@ -186,6 +190,7 @@ public interface CompletionStage<T> {
      * @param action the action to perform before completing the
      * returned CompletionStage
      * @return the new CompletionStage
+     * 使用消费者处理返回结果
      */
     public CompletionStage<Void> thenAccept(Consumer<? super T> action);
 
@@ -201,6 +206,7 @@ public interface CompletionStage<T> {
      * @param action the action to perform before completing the
      * returned CompletionStage
      * @return the new CompletionStage
+     * 使用消费者 异步处理
      */
     public CompletionStage<Void> thenAcceptAsync(Consumer<? super T> action);
 
@@ -216,6 +222,7 @@ public interface CompletionStage<T> {
      * returned CompletionStage
      * @param executor the executor to use for asynchronous execution
      * @return the new CompletionStage
+     * 使用线程池 进行异步消费
      */
     public CompletionStage<Void> thenAcceptAsync(Consumer<? super T> action,
                                                  Executor executor);
@@ -229,6 +236,7 @@ public interface CompletionStage<T> {
      * @param action the action to perform before completing the
      * returned CompletionStage
      * @return the new CompletionStage
+     * 任务完成时  执行 action
      */
     public CompletionStage<Void> thenRun(Runnable action);
 
@@ -243,6 +251,7 @@ public interface CompletionStage<T> {
      * @param action the action to perform before completing the
      * returned CompletionStage
      * @return the new CompletionStage
+     * 任务完成时 异步执行 action
      */
     public CompletionStage<Void> thenRunAsync(Runnable action);
 
@@ -257,6 +266,7 @@ public interface CompletionStage<T> {
      * returned CompletionStage
      * @param executor the executor to use for asynchronous execution
      * @return the new CompletionStage
+     * 使用传入的线程池 异步执行
      */
     public CompletionStage<Void> thenRunAsync(Runnable action,
                                               Executor executor);
@@ -275,6 +285,7 @@ public interface CompletionStage<T> {
      * @param <U> the type of the other CompletionStage's result
      * @param <V> the function's return type
      * @return the new CompletionStage
+     * 当2个任务都完成时 将结果组合
      */
     public <U,V> CompletionStage<V> thenCombine
         (CompletionStage<? extends U> other,
@@ -295,6 +306,7 @@ public interface CompletionStage<T> {
      * @param <U> the type of the other CompletionStage's result
      * @param <V> the function's return type
      * @return the new CompletionStage
+     * 2个任务都完成时 异步组合结果
      */
     public <U,V> CompletionStage<V> thenCombineAsync
         (CompletionStage<? extends U> other,
@@ -335,6 +347,7 @@ public interface CompletionStage<T> {
      * returned CompletionStage
      * @param <U> the type of the other CompletionStage's result
      * @return the new CompletionStage
+     * 等2个完成后同时消费2个结果
      */
     public <U> CompletionStage<Void> thenAcceptBoth
         (CompletionStage<? extends U> other,
@@ -351,6 +364,7 @@ public interface CompletionStage<T> {
      * returned CompletionStage
      * @param <U> the type of the other CompletionStage's result
      * @return the new CompletionStage
+     * 异步消费
      */
     public <U> CompletionStage<Void> thenAcceptBothAsync
         (CompletionStage<? extends U> other,

@@ -87,6 +87,7 @@ import java.util.function.UnaryOperator;
  * @since 1.5
  * @author Doug Lea
  * @param <E> the type of elements held in this collection
+ *           写操作都需要上锁 读操作不需要上锁 在写操作完成后 因为 array是 volatile修饰的所以能读取到更新后的数组
  */
 public class CopyOnWriteArrayList<E>
     implements List<E>, RandomAccess, Cloneable, java.io.Serializable {

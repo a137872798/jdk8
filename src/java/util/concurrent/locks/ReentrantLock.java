@@ -729,6 +729,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
      * @throws IllegalArgumentException if the given condition is
      *         not associated with this lock
      * @throws NullPointerException if the condition is null
+     * 判断同步器中是否 包含某个条件对象
      */
     public boolean hasWaiters(Condition condition) {
         if (condition == null)

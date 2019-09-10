@@ -106,6 +106,7 @@ import java.util.concurrent.locks.LockSupport;
  *
  * @author Doug Lea
  * @since 1.8
+ * 组合对象 可以将多个 future 结果 组合 或消费等
  */
 public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
 

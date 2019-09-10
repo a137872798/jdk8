@@ -88,6 +88,7 @@ import java.util.function.Consumer;
  * @author Doug Lea
  * @author Martin Buchholz
  * @param <E> the type of elements held in this collection
+ *           并发双端链表
  */
 public class ConcurrentLinkedDeque<E>
     extends AbstractCollection<E>
@@ -258,6 +259,7 @@ public class ConcurrentLinkedDeque<E>
      * Non-invariants:
      * - head.item may or may not be null
      * - head may not be reachable from the first or last node, or from tail
+     * 首节点
      */
     private transient volatile Node<E> head;
 
@@ -272,6 +274,7 @@ public class ConcurrentLinkedDeque<E>
      * Non-invariants:
      * - tail.item may or may not be null
      * - tail may not be reachable from the first or last node, or from head
+     * 尾节点
      */
     private transient volatile Node<E> tail;
 
@@ -287,6 +290,10 @@ public class ConcurrentLinkedDeque<E>
         return (Node<E>) NEXT_TERMINATOR;
     }
 
+    /**
+     * node 节点数据结构 包含 前后节点 以及数据体
+     * @param <E>
+     */
     static final class Node<E> {
         volatile Node<E> prev;
         volatile E item;
@@ -348,6 +355,7 @@ public class ConcurrentLinkedDeque<E>
 
     /**
      * Links e as first element.
+     * 将节点添加到 head
      */
     private void linkFirst(E e) {
         checkNotNull(e);
@@ -355,11 +363,15 @@ public class ConcurrentLinkedDeque<E>
 
         restartFromHead:
         for (;;)
+            // h 和 p 一开始 都是 head 节点
             for (Node<E> h = head, p = h, q;;) {
+                // p 的上个节点不为空
                 if ((q = p.prev) != null &&
+                    //  上上个节点也不为空
                     (q = (p = q).prev) != null)
                     // Check for head updates every other hop.
                     // If p == q, we are sure to follow head instead.
+                    // (h != (h = head)) 判断 head 是否是h  并且将 h 更新成 head  如果 h 是 head ->  p == h
                     p = (h != (h = head)) ? h : q;
                 else if (p.next == p) // PREV_TERMINATOR
                     continue restartFromHead;

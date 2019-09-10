@@ -152,6 +152,7 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
  *
  * @since 1.5
  * @author Doug Lea
+ * 栅栏 基于 AQS 实现
  */
 public class CountDownLatch {
     /**
@@ -161,26 +162,46 @@ public class CountDownLatch {
     private static final class Sync extends AbstractQueuedSynchronizer {
         private static final long serialVersionUID = 4982264981922014374L;
 
+        /**
+         * 通过给定的次数进行初始化
+         * @param count
+         */
         Sync(int count) {
             setState(count);
         }
 
+        /**
+         * 获取次数信息
+         * @return
+         */
         int getCount() {
             return getState();
         }
 
+        /**
+         * 只有state == 0 才能获取到 锁 也就是 调用await 后 要等待 state 变成0
+         * @param acquires
+         * @return
+         */
         protected int tryAcquireShared(int acquires) {
             return (getState() == 0) ? 1 : -1;
         }
 
+        /**
+         * 其他线程尝试释放锁
+         * @param releases
+         * @return
+         */
         protected boolean tryReleaseShared(int releases) {
             // Decrement count; signal when transition to zero
             for (;;) {
                 int c = getState();
                 if (c == 0)
+                    // 代表栅栏只能触发一次 一旦 变成0 之后 再调用 释放不会有任何影响
                     return false;
                 int nextc = c-1;
                 if (compareAndSetState(c, nextc))
+                    // 只有当 state 变成0 才会触发唤醒共享锁的操作
                     return nextc == 0;
             }
         }
@@ -197,6 +218,7 @@ public class CountDownLatch {
      */
     public CountDownLatch(int count) {
         if (count < 0) throw new IllegalArgumentException("count < 0");
+        // 使用给定的次数 初始化
         this.sync = new Sync(count);
     }
 
@@ -226,6 +248,7 @@ public class CountDownLatch {
      *
      * @throws InterruptedException if the current thread is interrupted
      *         while waiting
+     *         尝试获取共享锁
      */
     public void await() throws InterruptedException {
         sync.acquireSharedInterruptibly(1);
@@ -286,6 +309,7 @@ public class CountDownLatch {
      * thread scheduling purposes.
      *
      * <p>If the current count equals zero then nothing happens.
+     * 减少 栅栏 变成0 的时候就能获取到锁
      */
     public void countDown() {
         sync.releaseShared(1);

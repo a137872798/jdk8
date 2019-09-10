@@ -579,7 +579,6 @@ public abstract class AbstractQueuedSynchronizer
      * Sets the value of synchronization state.
      * This operation has memory semantics of a {@code volatile} write.
      * @param newState the new state value
-     *                 设置给定的状态 这里不通过CAS 来更改吗???
      */
     protected final void setState(int newState) {
         state = newState;
@@ -784,6 +783,7 @@ public abstract class AbstractQueuedSynchronizer
     private void setHeadAndPropagate(Node node, int propagate) {
         // 获取首节点
         Node h = head; // Record old head for check below
+        // 将node作为 head 节点 同时 node.pred 置空 这样就 自动回收了
         setHead(node);
         /*
          * Try to signal next queued node if:
@@ -1695,6 +1695,7 @@ public abstract class AbstractQueuedSynchronizer
         Node t = tail; // Read fields in reverse initialization order
         Node h = head;
         Node s;
+        // 如果当前抢占到锁的 节点 也就是之后会被设置成 head 节点 它同时是 tail 节点 就不满足 h != t 的条件 也就是 队列中没有其他元素
         return h != t &&
             ((s = h.next) == null || s.thread != Thread.currentThread());
     }
@@ -1912,7 +1913,7 @@ public abstract class AbstractQueuedSynchronizer
         try {
             // 获取当前状态  对应 reentrantlock 来说 state 就是当前上锁次数
             int savedState = getState();
-            // 根据对应的状态走不同的释放逻辑  核心判断是否可以释放锁的 逻辑在 tryRelease
+            // 根据对应的状态走不同的释放逻辑s  核心判断是否可以释放锁的 逻辑在 tryRelease
             // 在锁内调用 condition.await  要直接释放掉所有次数
             if (release(savedState)) {
                 failed = false;
@@ -2166,10 +2167,11 @@ public abstract class AbstractQueuedSynchronizer
          *
          * @throws IllegalMonitorStateException if {@link #isHeldExclusively}
          *         returns {@code false}
-         *         唤醒节点  TODO 这里还有一点点问题 哪个线程调用signal 调用signal 的线程 什么时候 停止 不停止的话 就有2条活跃线程了
+         *         唤醒节点
          */
         public final void signal() {
-            // 必须是 独占锁 环境  该方法由子类实现
+            // 必须确保唤醒的线程是占有锁的线程 需要注意的是 该线程唤醒的 conditon 的节点所包含的线程并不唤醒线程
+            // condition.node.thread != exclusively.thread
             if (!isHeldExclusively())
                 throw new IllegalMonitorStateException();
             // 唤醒首节点
