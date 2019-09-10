@@ -135,6 +135,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * @see CountDownLatch
  *
  * @author Doug Lea
+ * 循环屏障
  */
 public class CyclicBarrier {
     /**

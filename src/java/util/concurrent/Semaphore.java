@@ -152,6 +152,7 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
  *
  * @since 1.5
  * @author Doug Lea
+ * 信号量
  */
 public class Semaphore implements java.io.Serializable {
     private static final long serialVersionUID = -3222578661600680210L;
@@ -166,6 +167,10 @@ public class Semaphore implements java.io.Serializable {
     abstract static class Sync extends AbstractQueuedSynchronizer {
         private static final long serialVersionUID = 1192457210091910933L;
 
+        /**
+         * 初始化时设置门票
+         * @param permits
+         */
         Sync(int permits) {
             setState(permits);
         }
@@ -174,16 +179,28 @@ public class Semaphore implements java.io.Serializable {
             return getState();
         }
 
+        /**
+         * 尝试获取锁
+         * @param acquires
+         * @return
+         */
         final int nonfairTryAcquireShared(int acquires) {
             for (;;) {
+                // 获取当前可用数量
                 int available = getState();
                 int remaining = available - acquires;
+                // 小于0 直接返回   cas 成功也返回 否则自旋
                 if (remaining < 0 ||
                     compareAndSetState(available, remaining))
                     return remaining;
             }
         }
 
+        /**
+         * 释放后 增加 permit
+         * @param releases
+         * @return
+         */
         protected final boolean tryReleaseShared(int releases) {
             for (;;) {
                 int current = getState();
@@ -195,6 +212,10 @@ public class Semaphore implements java.io.Serializable {
             }
         }
 
+        /**
+         * 减少permit
+         * @param reductions
+         */
         final void reducePermits(int reductions) {
             for (;;) {
                 int current = getState();
@@ -242,6 +263,7 @@ public class Semaphore implements java.io.Serializable {
 
         protected int tryAcquireShared(int acquires) {
             for (;;) {
+                // 如果队列中有待处理 节点 就无法直接抢占锁 必须要加入到同步队列中
                 if (hasQueuedPredecessors())
                     return -1;
                 int available = getState();
