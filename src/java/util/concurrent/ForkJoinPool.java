@@ -696,6 +696,7 @@ public class ForkJoinPool extends AbstractExecutorService {
     /**
      * If there is a security manager, makes sure caller has
      * permission to modify threads.
+     * 权限校验的先不看
      */
     private static void checkPermission() {
         SecurityManager security = System.getSecurityManager();
@@ -726,6 +727,7 @@ public class ForkJoinPool extends AbstractExecutorService {
     /**
      * Default ForkJoinWorkerThreadFactory implementation; creates a
      * new ForkJoinWorkerThread.
+     * 默认的forkjoin 线程工厂
      */
     static final class DefaultForkJoinWorkerThreadFactory
         implements ForkJoinWorkerThreadFactory {
@@ -739,21 +741,47 @@ public class ForkJoinPool extends AbstractExecutorService {
      * of local joins if they are removed from an interior queue slot
      * in WorkQueue.tryRemoveAndExec. We don't need the proxy to
      * actually do anything beyond having a unique identity.
+     * 默认的空任务
      */
     static final class EmptyTask extends ForkJoinTask<Void> {
         private static final long serialVersionUID = -7721805057305804111L;
+
+        /**
+         * 状态 始终为 normal
+         */
         EmptyTask() { status = ForkJoinTask.NORMAL; } // force done
+
+        /**
+         * 该 task 的执行结果为 null
+         * @return
+         */
         public final Void getRawResult() { return null; }
+
+        /**
+         * 设置结果 不做任何操作
+         * @param x
+         */
         public final void setRawResult(Void x) {}
+
+        /**
+         * 应该是代表是否执行成功
+         * @return
+         */
         public final boolean exec() { return true; }
     }
 
-    // Constants shared across ForkJoinPool and WorkQueue
+    // Constants shared across ForkJoinPool and WorkQueue  工作队列和线程池 的常量
 
     // Bounds
     static final int SMASK        = 0xffff;        // short bits == max index
+    /**
+     * 最大的并行度  32767
+     */
     static final int MAX_CAP      = 0x7fff;        // max #workers - 1
     static final int EVENMASK     = 0xfffe;        // even short bits
+    /**
+     * 126
+     */
     static final int SQMASK       = 0x007e;        // max 64 (even) slots
 
     // Masks and units for WorkQueue.scanState and ctl sp subfield
@@ -775,6 +803,10 @@ public class ForkJoinPool extends AbstractExecutorService {
      * do not want multiple WorkQueue instances or multiple queue
      * arrays sharing cache lines. The @Contended annotation alerts
      * JVMs to try to keep instances apart.
+     *
+     * we absolutely do not want multiple WorkQueue instances or multiple queue arrays sharing cache lines.
+     * 我们不需要这么多 工作队列去共享缓存行所以使用了 @Contended 注解
+     * 支持工作窃取的队列
      */
     @sun.misc.Contended
     static final class WorkQueue {
@@ -787,6 +819,7 @@ public class ForkJoinPool extends AbstractExecutorService {
          * the fact that JVMs often place arrays in locations that
          * share GC bookkeeping (especially cardmarks) such that
          * per-write accesses encounter serious memory contention.
+         * 初始化的 工作队列大小
          */
         static final int INITIAL_QUEUE_CAPACITY = 1 << 13;
 
@@ -796,10 +829,14 @@ public class ForkJoinPool extends AbstractExecutorService {
          * lack of wraparound of index calculations, but defined to a
          * value a bit less than this to help users trap runaway
          * programs before saturating systems.
+         * 队列最大长度
          */
         static final int MAXIMUM_QUEUE_CAPACITY = 1 << 26; // 64M
 
         // Instance fields
+        /**
+         * 扫描状态
+         */
         volatile int scanState;    // versioned, <0: inactive; odd:scanning
         int stackPred;             // pool stack (ctl) predecessor
         int nsteals;               // number of steals
@@ -815,10 +852,16 @@ public class ForkJoinPool extends AbstractExecutorService {
         volatile ForkJoinTask<?> currentJoin;  // task being joined in awaitJoin
         volatile ForkJoinTask<?> currentSteal; // mainly used by helpStealer
 
+        /**
+         * 使用一个线程池对象和一个工作线程来初始化 forkjoin
+         * @param pool
+         * @param owner 代表该 队列是由哪个线程负责处理  这里跟 普通线程池 不一样(普通线程池的 阻塞队列是多个 worker共享 每个worker对应一个线程)
+         */
         WorkQueue(ForkJoinPool pool, ForkJoinWorkerThread owner) {
             this.pool = pool;
             this.owner = owner;
             // Place indices in the center of array (that is not yet allocated)
+            // 这里将 数组中间下标 作为 顶部元素
             base = top = INITIAL_QUEUE_CAPACITY >>> 1;
         }
 
@@ -1252,6 +1295,7 @@ public class ForkJoinPool extends AbstractExecutorService {
     /**
      * Creates a new ForkJoinWorkerThread. This factory is used unless
      * overridden in ForkJoinPool constructors.
+     * 代表 forkjoin 的线程工厂
      */
     public static final ForkJoinWorkerThreadFactory
         defaultForkJoinWorkerThreadFactory;
@@ -1259,6 +1303,7 @@ public class ForkJoinPool extends AbstractExecutorService {
     /**
      * Permission required for callers of methods that may start or
      * kill threads.
+     * 请求  执行可能会启动或者杀死线程的方法
      */
     private static final RuntimePermission modifyThreadPermission;
 
@@ -1267,6 +1312,7 @@ public class ForkJoinPool extends AbstractExecutorService {
      * construction exception, but internal usages null-check on use
      * to paranoically avoid potential initialization circularities
      * as well as to simplify generated code.
+     * forkjoin线程池 作为一个常量
      */
     static final ForkJoinPool common;
 
@@ -1275,22 +1321,26 @@ public class ForkJoinPool extends AbstractExecutorService {
      * when common pool threads are disabled, we allow the underlying
      * common.parallelism field to be zero, but in that case still report
      * parallelism as 1 to reflect resulting caller-runs mechanics.
+     * 公共线程池 允许的最大并发数
      */
     static final int commonParallelism;
 
     /**
      * Limit on spare thread construction in tryCompensate.
+     * 分享线程构造???
      */
     private static int commonMaxSpares;
 
     /**
      * Sequence number for creating workerNamePrefix.
+     * 代表创建的线程数量前缀 可以发现该值也是静态类 也就是 全局性的
      */
     private static int poolNumberSequence;
 
     /**
      * Returns the next sequence number. We don't expect this to
      * ever contend, so use simple builtin sync.
+     * 通过内置锁 保证 数值同步增长
      */
     private static final synchronized int nextPoolId() {
         return ++poolNumberSequence;
@@ -1389,18 +1439,43 @@ public class ForkJoinPool extends AbstractExecutorService {
     private static final int  SHUTDOWN   = 1 << 31;
 
     // Instance fields
+    /**
+     * 用于标记当前线程池的状态
+     */
     volatile long ctl;                   // main pool control
     volatile int runState;               // lockable status
+    /**
+     * 标记线程池相关的配置 (并行模式)
+     */
     final int config;                    // parallelism, mode
+    /**
+     * 生成下标相关的参数
+     */
     int indexSeed;                       // to generate worker index
+    /**
+     * 任务队列
+     */
     volatile WorkQueue[] workQueues;     // main registry
+    /**
+     * 线程工厂
+     */
     final ForkJoinWorkerThreadFactory factory;
+    /**
+     * 针对未受检异常的处理器对象
+     */
     final UncaughtExceptionHandler ueh;  // per-worker UEH
+    /**
+     * 创建的 worker name前缀
+     */
     final String workerNamePrefix;       // to create worker name string
+    /**
+     * 偷取任务的数量???
+     */
     volatile AtomicLong stealCounter;    // also used as sync monitor
 
     /**
      * Acquires the runState lock; returns current (locked) runState.
+     * 获取当前运行状态
      */
     private int lockRunState() {
         int rs;
@@ -1529,12 +1604,17 @@ public class ForkJoinPool extends AbstractExecutorService {
      *
      * @param wt the worker thread
      * @return the worker's queue
+     * 接受一个 forkjoin 线程 并返回一个 任务队列
      */
     final WorkQueue registerWorker(ForkJoinWorkerThread wt) {
+        // 当线程发生了某种未受检异常时 会处理异常
         UncaughtExceptionHandler handler;
+        // 将forkjoin 线程设置成 守护线程
         wt.setDaemon(true);                           // configure thread
+        // 相当于用了一个副本对象
         if ((handler = ueh) != null)
             wt.setUncaughtExceptionHandler(handler);
+        // 初始化forkjoin 任务队列
         WorkQueue w = new WorkQueue(this, wt);
         int i = 0;                                    // assign a pool index
         int mode = config & MODE_MASK;
@@ -2397,10 +2477,14 @@ public class ForkJoinPool extends AbstractExecutorService {
      * for externalSubmit.
      *
      * @param task the task. Caller must ensure non-null.
+     *             外部线程将某个任务 推入到线程池中
      */
     final void externalPush(ForkJoinTask<?> task) {
+        // 工作队列数组 当前工作者
         WorkQueue[] ws; WorkQueue q; int m;
+        // 返回当前线程的 探测值
         int r = ThreadLocalRandom.getProbe();
+        // 获取当前运行状态
         int rs = runState;
         if ((ws = workQueues) != null && (m = (ws.length - 1)) >= 0 &&
             (q = ws[m & r & SQMASK]) != null && r != 0 && rs > 0 &&
@@ -2560,6 +2644,13 @@ public class ForkJoinPool extends AbstractExecutorService {
      * Creates a {@code ForkJoinPool} with the given parameters, without
      * any security checks or parameter validation.  Invoked directly by
      * makeCommonPool.
+     * 初始化 forkjoin 线程池对象 注意该构造函数 是 private
+     * 也可以显示构建forkjoinPool
+     * @param parallelism 代表线程池的并行度
+     * @param factory 代表线程工厂
+     * @param handler 代表异常处理器
+     * @param mode 代表使用的队列模式
+     * @param workerNamePrefix 代表生成的线程名前缀
      */
     private ForkJoinPool(int parallelism,
                          ForkJoinWorkerThreadFactory factory,
@@ -2569,8 +2660,11 @@ public class ForkJoinPool extends AbstractExecutorService {
         this.workerNamePrefix = workerNamePrefix;
         this.factory = factory;
         this.ueh = handler;
+        // 代表 后15位都是 并行度相关信息 | mode 代表配置信息    mode 默认是0
         this.config = (parallelism & SMASK) | mode;
+        // np 代表 负的并行度???
         long np = (long)(-parallelism); // offset ctl counts
+        // TODO 先不细看
         this.ctl = ((np << AC_SHIFT) & AC_MASK) | ((np << TC_SHIFT) & TC_MASK);
     }
 
@@ -2638,6 +2732,7 @@ public class ForkJoinPool extends AbstractExecutorService {
      * @throws NullPointerException if the task is null
      * @throws RejectedExecutionException if the task cannot be
      *         scheduled for execution
+     *         使用forkjoin 线程池 执行一个普通任务
      */
     public void execute(Runnable task) {
         if (task == null)
@@ -2646,7 +2741,9 @@ public class ForkJoinPool extends AbstractExecutorService {
         if (task instanceof ForkJoinTask<?>) // avoid re-wrap
             job = (ForkJoinTask<?>) task;
         else
+            // 将 task 包装成 forkjointask
             job = new ForkJoinTask.RunnableExecuteAction(task);
+        // 代表外部线程 将 封装后的 task 推入某个数据结构中
         externalPush(job);
     }
 
@@ -3353,6 +3450,9 @@ public class ForkJoinPool extends AbstractExecutorService {
     private static final long QCURRENTSTEAL;
     private static final long QCURRENTJOIN;
 
+    /**
+     * 该 对象在初始化时 触发的静态块
+     */
     static {
         // initialize field offsets for CAS etc
         try {
@@ -3395,6 +3495,9 @@ public class ForkJoinPool extends AbstractExecutorService {
             new DefaultForkJoinWorkerThreadFactory();
         modifyThreadPermission = new RuntimePermission("modifyThread");
 
+        /**
+         * 初始化 forkjoin线程池对象 就是 通过 makeCommonPool() 初始化线程池对象
+         */
         common = java.security.AccessController.doPrivileged
             (new java.security.PrivilegedAction<ForkJoinPool>() {
                 public ForkJoinPool run() { return makeCommonPool(); }});
@@ -3405,12 +3508,15 @@ public class ForkJoinPool extends AbstractExecutorService {
     /**
      * Creates and returns the common pool, respecting user settings
      * specified via system properties.
+     * 初始化 全局的 forkjoin线程池对象
      */
     private static ForkJoinPool makeCommonPool() {
+        // 并行度 默认为-1
         int parallelism = -1;
         ForkJoinWorkerThreadFactory factory = null;
         UncaughtExceptionHandler handler = null;
         try {  // ignore exceptions in accessing/parsing properties
+            // 尝试从系统变量中 获取相关参数
             String pp = System.getProperty
                 ("java.util.concurrent.ForkJoinPool.common.parallelism");
             String fp = System.getProperty
@@ -3429,22 +3535,27 @@ public class ForkJoinPool extends AbstractExecutorService {
         }
         if (factory == null) {
             if (System.getSecurityManager() == null)
+                // 使用默认的线程池工厂
                 factory = defaultForkJoinWorkerThreadFactory;
             else // use security-managed default
+                // 如果需要权限校验 生成能创建 InnocuousForkJoinWorkerThread 的线程工厂
                 factory = new InnocuousForkJoinWorkerThreadFactory();
         }
         // 默认情况下 parallelism = Runtime.getRuntime().availableProcessors() - 1
         if (parallelism < 0 && // default 1 less than #cores
             (parallelism = Runtime.getRuntime().availableProcessors() - 1) <= 0)
             parallelism = 1;
+        // 并行度 不能超过 MAX_CAP
         if (parallelism > MAX_CAP)
             parallelism = MAX_CAP;
+        // 构建 forkjoin 线程池
         return new ForkJoinPool(parallelism, factory, handler, LIFO_QUEUE,
                                 "ForkJoinPool.commonPool-worker-");
     }
 
     /**
      * Factory for innocuous worker threads
+     * 无害的线程池 ???
      */
     static final class InnocuousForkJoinWorkerThreadFactory
         implements ForkJoinWorkerThreadFactory {
@@ -3452,6 +3563,7 @@ public class ForkJoinPool extends AbstractExecutorService {
         /**
          * An ACC to restrict permissions for the factory itself.
          * The constructed workers have no permissions set.
+         * 权限先不看
          */
         private static final AccessControlContext innocuousAcc;
         static {

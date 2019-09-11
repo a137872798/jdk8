@@ -152,11 +152,13 @@ public class ScheduledThreadPoolExecutor
 
     /**
      * False if should cancel/suppress periodic tasks on shutdown.
+     * shutdown 时 不能执行周期性任务
      */
     private volatile boolean continueExistingPeriodicTasksAfterShutdown;
 
     /**
      * False if should cancel non-periodic tasks on shutdown.
+     * shutdown 时 能执行正常任务
      */
     private volatile boolean executeExistingDelayedTasksAfterShutdown = true;
 
@@ -297,7 +299,7 @@ public class ScheduledThreadPoolExecutor
             if (p > 0)
                 time += p;
             else
-                // 处理负数的情况 不细看
+                // 处理负数的情况 计算时间的公式不同
                 time = triggerTime(-p);
         }
 
@@ -325,7 +327,7 @@ public class ScheduledThreadPoolExecutor
          * 执行任务
          */
         public void run() {
-            // 判断当前任务是否是定时任务
+            // 判断当前任务是否周期性任务 (代表需要重新回队列)
             boolean periodic = isPeriodic();
             // 判断 在 shutdown 的情况 能否继续执行任务 不行就 调用 cancel 关闭任务
             if (!canRunInCurrentRunState(periodic))
@@ -333,7 +335,7 @@ public class ScheduledThreadPoolExecutor
             // 非定时任务 就直接执行任务
             else if (!periodic)
                 ScheduledFutureTask.super.run();
-            // 代表是定时任务 执行任务 成功后 更新下次的执行时间  不是应该有个首次执行的时间间隔吗???
+            // 代表是定时任务 执行任务 成功后 更新下次的执行时间
             else if (ScheduledFutureTask.super.runAndReset()) {
                 // 设置下次执行时间
                 setNextRunTime();
@@ -972,16 +974,22 @@ public class ScheduledThreadPoolExecutor
          */
         private void siftUp(int k, RunnableScheduledFuture<?> key) {
             while (k > 0) {
-                // 这里使用的是 以
+                // 这里使用的是 以 0作为 起点的二叉堆 也就是 left 是 2n+1 right 2n+2
+                // 这样 (k - 1) >>> 1 可以得到父节点
                 int parent = (k - 1) >>> 1;
+                // 获取对应的元素
                 RunnableScheduledFuture<?> e = queue[parent];
+                // 代表不需要被替换了 跳出循环
                 if (key.compareTo(e) >= 0)
                     break;
+                // 交换父子位置
                 queue[k] = e;
+                // 更新元素在堆中的下标
                 setIndex(e, k);
                 k = parent;
             }
             queue[k] = key;
+            // 更新下标
             setIndex(key, k);
         }
 
@@ -993,9 +1001,12 @@ public class ScheduledThreadPoolExecutor
          */
         private void siftDown(int k, RunnableScheduledFuture<?> key) {
             int half = size >>> 1;
+            // 从 0 -> half 依次开始下沉
             while (k < half) {
+                // left 节点
                 int child = (k << 1) + 1;
                 RunnableScheduledFuture<?> c = queue[child];
+                // right 节点
                 int right = child + 1;
                 if (right < size && c.compareTo(queue[right]) > 0)
                     c = queue[child = right];
@@ -1144,8 +1155,11 @@ public class ScheduledThreadPoolExecutor
                     // 代表不是第一个元素 那么需要进行上浮  (添加到数组的尾部 要维护堆的状态就要跟上面的元素做大小判断)
                     siftUp(i, e);
                 }
+                // 代表该节点 刚好属于最早出优先队列的 节点
                 if (queue[0] == e) {
+                    // 清除 leader
                     leader = null;
+                    // 唤醒其他被阻塞的 线程 去拉取 first 这里的 任务还没到时间吧
                     available.signal();
                 }
             } finally {
@@ -1170,15 +1184,18 @@ public class ScheduledThreadPoolExecutor
          * Performs common bookkeeping for poll and take: Replaces
          * first element with last and sifts it down.  Call only when
          * holding lock.
-         * @param f the task to remove and return
+         * @param f the task to remove and return  代表被弹出的首元素
          *          当拉取元素结束时  将尾元素与 首元素 交换
          */
         private RunnableScheduledFuture<?> finishPoll(RunnableScheduledFuture<?> f) {
             int s = --size;
+            // 获取最后一个元素
             RunnableScheduledFuture<?> x = queue[s];
             queue[s] = null;
+            // 长度不为0 的情况 进行下沉
             if (s != 0)
                 siftDown(0, x);
+            // f节点的堆下标设置为-1 代表从 堆中被移除了
             setIndex(f, -1);
             return f;
         }
@@ -1240,6 +1257,15 @@ public class ScheduledThreadPoolExecutor
             }
         }
 
+        /**
+         * 超时拉取 对应到线程池中会使用的方法 还有种是调用 take
+         * @param timeout how long to wait before giving up, in units of
+         *        {@code unit}
+         * @param unit a {@code TimeUnit} determining how to interpret the
+         *        {@code timeout} parameter
+         * @return
+         * @throws InterruptedException
+         */
         public RunnableScheduledFuture<?> poll(long timeout, TimeUnit unit)
             throws InterruptedException {
             long nanos = unit.toNanos(timeout);
@@ -1247,35 +1273,53 @@ public class ScheduledThreadPoolExecutor
             lock.lockInterruptibly();
             try {
                 for (;;) {
+                    // 获取首个元素
                     RunnableScheduledFuture<?> first = queue[0];
                     if (first == null) {
                         if (nanos <= 0)
                             return null;
                         else
+                            // 阻塞等到元素添加 单纯添加还是不会唤醒 而要等到 任务 到执行时间
                             nanos = available.awaitNanos(nanos);
                     } else {
+                        // 获取首个任务的 执行时间
                         long delay = first.getDelay(NANOSECONDS);
                         if (delay <= 0)
+                            // 拉取任务 这里要从尾部 将节点移动到 顶部并执行下沉逻辑
                             return finishPoll(first);
+                        // 进入到这里代表 first 存在 但是还没到 执行时间 而等待时间已经过了 只能返回null
                         if (nanos <= 0)
                             return null;
+                        // 等待时间还没到 那么就应该要被阻塞
                         first = null; // don't retain ref while waiting
+                        // 如果 等待时间 小于 首个任务弹出的时间 先尝试阻塞
+                        // 如果 leader != null 代表有另一个线程 已经打算拉取任务了  因为线程池 有多个线程会同时从 阻塞队列中拉取任务
+                        // 那么 过了 delay 后弹出的元素肯定不属于 该线程  就只能阻塞更长的时间
                         if (nanos < delay || leader != null)
                             nanos = available.awaitNanos(nanos);
                         else {
+                            // 获取当前拉取first 的线程
                             Thread thisThread = Thread.currentThread();
+                            // 将leader 设置成该线程
                             leader = thisThread;
                             try {
+                                // 只阻塞 首个任务弹出的时间  注意 该节点 在 condition队列中 是早于上面那个阻塞节点的
                                 long timeLeft = available.awaitNanos(delay);
+                                // 代表剩余的 等待时间
                                 nanos -= delay - timeLeft;
                             } finally {
+                                // 这里 会出现不相等的情况吗  leader 可能等于 null 因为 add的时候 会将该值置空
                                 if (leader == thisThread)
                                     leader = null;
                             }
                         }
                     }
                 }
+                // 返回 first 或者 超时 没有拿到元素 返回null
             } finally {
+                // 发现首元素 不为空 就唤醒下个condition 的节点
+                // leader == null 的 原因是 如果 leader != null 就代表 某个节点的唤醒时间是正好的 它醒来时刚好发现一个可以运行的任务
+                // 这样就不需要额外的触发手段
                 if (leader == null && queue[0] != null)
                     available.signal();
                 lock.unlock();
@@ -1290,6 +1334,7 @@ public class ScheduledThreadPoolExecutor
                     RunnableScheduledFuture<?> t = queue[i];
                     if (t != null) {
                         queue[i] = null;
+                        // 设置成 -1 代表从堆中移除
                         setIndex(t, -1);
                     }
                 }

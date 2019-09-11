@@ -259,7 +259,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      */
     static final int DONE_MASK = 0xf0000000;  // mask out non-completion bits
     /**
-     * 正常完成
+     * 普通状态
      */
     static final int NORMAL = 0xf0000000;  // must be negative
     /**
@@ -272,9 +272,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
     static final int EXCEPTIONAL = 0x80000000;  // must be < CANCELLED
 
     // positive
-    /**
-     * signal 代表 执行状态 ???  应该是 处理中的意思
-     */
+
     static final int SIGNAL = 0x00010000;  // must be >= 1 << 16
     static final int SMASK = 0x0000ffff;  // short bits for tags
 
@@ -398,15 +396,20 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
 
     /**
      * Blocks a non-worker-thread until completion or interruption.
+     * 当外部线程 尝试获取 forkjoin 的结果时 需要阻塞等待结果
      */
     private int externalInterruptibleAwaitDone() throws InterruptedException {
         int s;
+        // 如果线程已经处在被打断状态 直接返回打断异常
         if (Thread.interrupted())
             throw new InterruptedException();
+        // status 默认是 0
         if ((s = status) >= 0 &&
+                // 判断是否是 计数对象  CountedCompleter 是一个链表结构 每个节点都记录了当前停止的任务数量
                 (s = ((this instanceof CountedCompleter) ?
                         ForkJoinPool.common.externalHelpComplete(
                                 (CountedCompleter<?>) this, 0) :
+                        // 尝试不要从 外部 push ???
                         ForkJoinPool.common.tryExternalUnpush(this) ? doExec() :
                                 0)) >= 0) {
             while ((s = status) >= 0) {
@@ -1048,8 +1051,10 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      *                               exception
      * @throws InterruptedException  if the current thread is not a
      *                               member of a ForkJoinPool and was interrupted while waiting
+     *                               调用 forkjointask 的get 方法 尝试获取结果
      */
     public final V get() throws InterruptedException, ExecutionException {
+        // 判断当前线程是否是 forkjoin线程 如果是 进行join 否则 阻塞外部线程 等待结果
         int s = (Thread.currentThread() instanceof ForkJoinWorkerThread) ?
                 doJoin() : externalInterruptibleAwaitDone();
         Throwable ex;
@@ -1473,8 +1478,13 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
 
     /**
      * Adaptor for Runnables in which failure forces worker exception
+     * runnable 的包装类 具备 forkjointask 的特性
      */
     static final class RunnableExecuteAction extends ForkJoinTask<Void> {
+
+        /**
+         * 内部的运行逻辑
+         */
         final Runnable runnable;
 
         RunnableExecuteAction(Runnable runnable) {
@@ -1482,18 +1492,34 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
             this.runnable = runnable;
         }
 
+        /**
+         * 原始的结果为null
+         * @return
+         */
         public final Void getRawResult() {
             return null;
         }
 
+        /**
+         * 设置原始结果
+         * @param v
+         */
         public final void setRawResult(Void v) {
         }
 
+        /**
+         * 执行逻辑就是 调用内部的 runnable
+         * @return
+         */
         public final boolean exec() {
             runnable.run();
             return true;
         }
 
+        /**
+         * 处理异常信息
+         * @param ex
+         */
         void internalPropagateException(Throwable ex) {
             rethrow(ex); // rethrow outside exec() catches.
         }

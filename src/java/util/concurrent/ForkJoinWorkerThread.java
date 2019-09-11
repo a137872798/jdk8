@@ -51,6 +51,7 @@ import java.security.ProtectionDomain;
  *
  * @since 1.7
  * @author Doug Lea
+ * forkjoin 的 专用线程
  */
 public class ForkJoinWorkerThread extends Thread {
     /*
@@ -70,7 +71,13 @@ public class ForkJoinWorkerThread extends Thread {
      * both here and in the subclass to access and set Thread fields.
      */
 
+    /**
+     * 关联的线程池对象
+     */
     final ForkJoinPool pool;                // the pool this thread works in
+    /**
+     * forkjoin 的 专用任务队列
+     */
     final ForkJoinPool.WorkQueue workQueue; // work-stealing mechanics
 
     /**
@@ -83,6 +90,7 @@ public class ForkJoinWorkerThread extends Thread {
         // Use a placeholder until a useful name can be set in registerWorker
         super("aForkJoinWorkerThread");
         this.pool = pool;
+        // 将本 线程注册到 线程池中
         this.workQueue = pool.registerWorker(this);
     }
 
@@ -93,8 +101,10 @@ public class ForkJoinWorkerThread extends Thread {
                          AccessControlContext acc) {
         super(threadGroup, null, "aForkJoinWorkerThread");
         U.putOrderedObject(this, INHERITEDACCESSCONTROLCONTEXT, acc);
+        // 擦除本地线程变量
         eraseThreadLocals(); // clear before registering
         this.pool = pool;
+        // 将本线程注册到线程池中 并返回对应的 任务队列
         this.workQueue = pool.registerWorker(this);
     }
 
