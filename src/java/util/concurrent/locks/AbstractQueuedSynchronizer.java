@@ -1032,6 +1032,7 @@ public abstract class AbstractQueuedSynchronizer
                     throw new InterruptedException();
             }
         } finally {
+            // 代表该节点本身 在阻塞过程中被 其他线程打断了 那么该节点就应该从 同步队列中移除
             if (failed)
                 cancelAcquire(node);
         }
@@ -2299,6 +2300,7 @@ public abstract class AbstractQueuedSynchronizer
             int interruptMode = 0;
             // 如果该node 节点 没有在同步队列中 阻塞当前线程也就是在等待其他线程 sign它
             while (!isOnSyncQueue(node)) {
+                // 该方法 能够感知到 其他线程对该线程的打断 并解除park 状态
                 LockSupport.park(this);
                 // 如果检测到被打断 选择抛出异常 或者 调用线程的 interrupt
                 if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)

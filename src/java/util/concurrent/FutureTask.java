@@ -215,7 +215,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
                 try {
                     Thread t = runner;
                     if (t != null)
-                        // 调用该方法时 如果t 本身处于sleep 等方法时 会触发 打断的异常 或者该线程本身设置了检查 打断的逻辑
+                        // 该方法会将park状态的线程 解除阻塞
                         t.interrupt();
                 } finally { // final state
                     // 当执行任务的线程 完成任务时  该state 修改成 INTERRUPTED (而不是 CANCELLED)
@@ -452,6 +452,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
                 for (; ; ) {
                     // 获取节点对应的线程对象
                     Thread t = q.thread;
+
                     if (t != null) {
                         // 设置成 null 时 队列还是存在的 只是当thread属性设置为null时 removeNode 方法 会将这些next指针置空
                         q.thread = null;
