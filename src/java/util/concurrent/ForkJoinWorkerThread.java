@@ -72,11 +72,11 @@ public class ForkJoinWorkerThread extends Thread {
      */
 
     /**
-     * 关联的线程池对象
+     * 代表该线程对应的 任务队列所属的线程池对象
      */
     final ForkJoinPool pool;                // the pool this thread works in
     /**
-     * forkjoin 的 专用任务队列
+     * 该线程对应的 工作队列
      */
     final ForkJoinPool.WorkQueue workQueue; // work-stealing mechanics
 
@@ -85,12 +85,13 @@ public class ForkJoinWorkerThread extends Thread {
      *
      * @param pool the pool this thread works in
      * @throws NullPointerException if pool is null
+     * 使用一个 forkjoin 的线程池对象去初始化 专用线程
      */
     protected ForkJoinWorkerThread(ForkJoinPool pool) {
         // Use a placeholder until a useful name can be set in registerWorker
         super("aForkJoinWorkerThread");
         this.pool = pool;
-        // 将本 线程注册到 线程池中
+        // 生成该线程对应的工作队列
         this.workQueue = pool.registerWorker(this);
     }
 
@@ -101,7 +102,7 @@ public class ForkJoinWorkerThread extends Thread {
                          AccessControlContext acc) {
         super(threadGroup, null, "aForkJoinWorkerThread");
         U.putOrderedObject(this, INHERITEDACCESSCONTROLCONTEXT, acc);
-        // 擦除本地线程变量
+        // 将该 Thread 的 ThreadLocal 清除掉
         eraseThreadLocals(); // clear before registering
         this.pool = pool;
         // 将本线程注册到线程池中 并返回对应的 任务队列
@@ -112,6 +113,7 @@ public class ForkJoinWorkerThread extends Thread {
      * Returns the pool hosting this thread.
      *
      * @return the pool
+     * 返回线程池对象
      */
     public ForkJoinPool getPool() {
         return pool;
@@ -126,6 +128,7 @@ public class ForkJoinWorkerThread extends Thread {
      * per-worker-thread rather than per-task.
      *
      * @return the index number
+     * 返回该工作队列 对于整个pool 的下标
      */
     public int getPoolIndex() {
         return workQueue.getPoolIndex();
@@ -158,12 +161,16 @@ public class ForkJoinWorkerThread extends Thread {
      * This method is required to be public, but should never be
      * called explicitly. It performs the main run loop to execute
      * {@link ForkJoinTask}s.
+     *
      */
     public void run() {
+        // 必须确保任务队列 还未被初始化
         if (workQueue.array == null) { // only run once
             Throwable exception = null;
             try {
+                // 执行前置钩子
                 onStart();
+                // 使用 pool 去初始化 任务队列
                 pool.runWorker(workQueue);
             } catch (Throwable ex) {
                 exception = ex;
@@ -174,6 +181,7 @@ public class ForkJoinWorkerThread extends Thread {
                     if (exception == null)
                         exception = ex;
                 } finally {
+                    // 注销某个 worker 对象
                     pool.deregisterWorker(this, exception);
                 }
             }
@@ -219,6 +227,7 @@ public class ForkJoinWorkerThread extends Thread {
      * A worker thread that has no permissions, is not a member of any
      * user-defined ThreadGroup, and erases all ThreadLocals after
      * running each top-level task.
+     * 针对没有权限的线程对象 增加赋予权限
      */
     static final class InnocuousForkJoinWorkerThread extends ForkJoinWorkerThread {
         /** The ThreadGroup for all InnocuousForkJoinWorkerThreads */
