@@ -362,20 +362,23 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      * 当外部线程执行任务时触发该方法
      */
     private int externalAwaitDone() {
-        // CountedCompleter 是一个链式结构 每个节点  包含多个子任务 称为 pending
+        // CountedCompleter 是一个链式结构
         int s = ((this instanceof CountedCompleter) ? // try helping
                 // 通过 外部线程协助完成任务
                 ForkJoinPool.common.externalHelpComplete(
                         (CountedCompleter<?>) this, 0) :
-                // 检查是否 允许从外部推送任务 看来 它不具备 积累并处理多任务的能力
+                // 使用外部线程执行一个普通任务  这里必须要是队列中的 top 任务 否则不会执行
                 ForkJoinPool.common.tryExternalUnpush(this) ? doExec() : 0);
+        // 代表 本次任务没有完成
         if (s >= 0 && (s = status) >= 0) {
             boolean interrupted = false;
             do {
+                // 将当前task 的状态标记成待唤醒
                 if (U.compareAndSwapInt(this, STATUS, s, s | SIGNAL)) {
                     synchronized (this) {
                         if (status >= 0) {
                             try {
+                                // 阻塞当前期待task 结果的线程
                                 wait(0L);
                             } catch (InterruptedException ie) {
                                 interrupted = true;
@@ -397,19 +400,21 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      */
     private int externalInterruptibleAwaitDone() throws InterruptedException {
         int s;
-        // 如果线程已经处在被打断状态 直接返回打断异常
+        // 代表线程中途被打断过 获取抛出被打断异常
         if (Thread.interrupted())
             throw new InterruptedException();
         // status 默认是 0
         if ((s = status) >= 0 &&
                 // 判断是否是 计数对象  CountedCompleter 是一个链表结构 每个节点都记录了当前停止的任务数量
                 (s = ((this instanceof CountedCompleter) ?
+                        // 外部线程从 pool 中寻找 wq 对象 并寻找 CC 对象 执行任务
                         ForkJoinPool.common.externalHelpComplete(
                                 (CountedCompleter<?>) this, 0) :
-                        // 尝试不要从 外部 push ???
+                        // 外部线程 从某个wq 上寻找首元素 如果是task 的情况就执行 否则不处理 这样下面就会wait
                         ForkJoinPool.common.tryExternalUnpush(this) ? doExec() :
                                 0)) >= 0) {
             while ((s = status) >= 0) {
+                // 标记成待唤醒状态
                 if (U.compareAndSwapInt(this, STATUS, s, s | SIGNAL)) {
                     synchronized (this) {
                         if (status >= 0)
@@ -438,12 +443,13 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
         ForkJoinPool.WorkQueue w;
         // 如果当前状态已经是负数了 直接返回
         return (s = status) < 0 ? s :
+                // 如果当前线程是FJ 线程
                 ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread) ?
-                        // unpush 如果传入拉取 的task 刚好在 top的位置 才返回true
+                        // 尝试从内部而不是 common 线程池 拉取任务
                         (w = (wt = (ForkJoinWorkerThread) t).workQueue).
-                                // 并且本次任务执行成功  返回 结果
+                                // 成功从wq 中拉取到任务 且执行完成 (<0 代表完成)
                                 tryUnpush(this) && (s = doExec()) < 0 ? s :
-                                // 否则等待执行
+                                // 当没有成功从wq 中找到匹配的任务时 等待
                                 wt.pool.awaitJoin(w, this, 0L) :
                         // 从外部等待执行
                         externalAwaitDone();
