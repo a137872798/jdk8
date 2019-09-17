@@ -359,6 +359,7 @@ class Thread implements Runnable {
      *        zero to indicate that this parameter is to be ignored.
      * @param acc the AccessControlContext to inherit, or
      *            AccessController.getContext() if null
+     *            初始化线程对象
      */
     private void init(ThreadGroup g, Runnable target, String name,
                       long stackSize, AccessControlContext acc) {
@@ -368,6 +369,7 @@ class Thread implements Runnable {
 
         this.name = name;
 
+        // 将创建该线程的 线程作为父线程  同时沿用父线程的线程组  在JVM 初始化时 会开启一个 main线程 并初始化首个线程组
         Thread parent = currentThread();
         SecurityManager security = System.getSecurityManager();
         if (g == null) {
@@ -402,6 +404,7 @@ class Thread implements Runnable {
         g.addUnstarted();
 
         this.group = g;
+        // 沿用父线程的属性
         this.daemon = parent.isDaemon();
         this.priority = parent.getPriority();
         if (security == null || isCCLOverridden(parent.getClass()))
@@ -412,10 +415,12 @@ class Thread implements Runnable {
                 acc != null ? acc : AccessController.getContext();
         this.target = target;
         setPriority(priority);
+        // 沿用 父线程的本地线程变量
         if (parent.inheritableThreadLocals != null)
             this.inheritableThreadLocals =
                 ThreadLocal.createInheritedMap(parent.inheritableThreadLocals);
         /* Stash the specified stack size in case the VM cares */
+        // 默认为0
         this.stackSize = stackSize;
 
         /* Set thread ID */
@@ -1234,6 +1239,7 @@ class Thread implements Runnable {
      *          if any thread has interrupted the current thread. The
      *          <i>interrupted status</i> of the current thread is
      *          cleared when this exception is thrown.
+     *          在 A 线程中 调用  Thread(B).join  那么 A 线程就会进入阻塞状态 等待B线程执行完逻辑后才继续执行 实现方式就是利用wait 和 notify
      */
     public final synchronized void join(long millis)
     throws InterruptedException {
@@ -1837,6 +1843,7 @@ class Thread implements Runnable {
      * @see #setUncaughtExceptionHandler
      * @see ThreadGroup#uncaughtException
      * @since 1.5
+     * 该对象 设置在 Thread 内部 用于处理run方法中出现的 非受检异常
      */
     @FunctionalInterface
     public interface UncaughtExceptionHandler {

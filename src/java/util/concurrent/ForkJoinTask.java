@@ -286,16 +286,14 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      */
     private int setCompletion(int completion) {
         for (int s; ; ) {
-            // 负数代表已经完成了  那么就不需要做处理 直接返回 status
+            // 负数代表已经完成了  那么就不需要做处理 直接返回 status  因为可以从外部将 状态直接修改成 如 Cancelled 等 (pool可以直接修改task状态)
             if ((s = status) < 0)
                 return s;
-            // 正数 代表是未完成的状态  与 负数 | 运算后返回  既然是 CAS 操作的话 可以保证 是将一个正数 与 completion 作运算
             if (U.compareAndSwapInt(this, STATUS, s, s | completion)) {
-                // 目前没有看到 != 0 的情况  设置完结果后 会唤醒其他阻塞的线程
+                // NORMAL / CANCELLED/ EXCEPTIONAL 对应的异常值  >>> 16 都会大于0
                 if ((s >>> 16) != 0)
-                    // 这里会将 internalWait wait 的任务唤醒  那么 setCompletion 只是针对一个小任务 并且该小 任务完成时会唤醒其他未完成
-                    // 的小任务
                     synchronized (this) {
+                        // 唤醒其他任务
                         notifyAll();
                     }
                 return completion;
@@ -320,7 +318,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
                 // 执行任务后 返回处理标识  exec() 方法由子类实现 也就是用户通过设置该方法执行任务
                 completed = exec();
             } catch (Throwable rex) {
-                // 将异常信息设置到结果中
+                // 将异常信息保存到数组结构中并为 本task 标记成异常
                 return setExceptionalCompletion(rex);
             }
             if (completed)
@@ -335,18 +333,17 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      * This task may or may not be done on exit. Ignores interrupts.
      *
      * @param timeout using Object.wait conventions.
-     *                当任务还没有完成时 设置成 SIGNAL 并wait 一定时间
-     *                setComplete() 和 internalWait 应该是在多线程 中被调用 (针对同一个task 对象) 这样在针对同一个对象
-     *                synchronized (this) 内调用 wait 和 notifyAll 才有意义
+     *                如果当前任务还没有完成 标记成 SIGNAL 也就是待唤醒状态 并让自身沉睡
+     *                谁是该方法的调用者???
      */
     final void internalWait(long timeout) {
         int s;
-        // 必须确保是  正数  (复数代表已经出现结果)
+        // 必须确保是  正数  (负数代表已经出现结果)
         if ((s = status) >= 0 && // force completer to issue notify
                 U.compareAndSwapInt(this, STATUS, s, s | SIGNAL)) {
             synchronized (this) {
                 if (status >= 0)
-                    // 沉睡当前的 task
+                    // 沉睡当前的 task 当其他线程调用setComplete 时会唤醒之前阻塞的线程
                     try {
                         wait(timeout);
                     } catch (InterruptedException ie) {
@@ -362,7 +359,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      * Blocks a non-worker-thread until completion.
      *
      * @return status upon completion
-     * 当执行本task 的线程非 ForkJoinWorkerThread 时 会触发该方法
+     * 当外部线程执行任务时触发该方法
      */
     private int externalAwaitDone() {
         // CountedCompleter 是一个链式结构 每个节点  包含多个子任务 称为 pending
@@ -442,8 +439,9 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
         // 如果当前状态已经是负数了 直接返回
         return (s = status) < 0 ? s :
                 ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread) ?
-                        // 这里好像是要将任务从 workQueue 中拉取出来并执行
+                        // unpush 如果传入拉取 的task 刚好在 top的位置 才返回true
                         (w = (wt = (ForkJoinWorkerThread) t).workQueue).
+                                // 并且本次任务执行成功  返回 结果
                                 tryUnpush(this) && (s = doExec()) < 0 ? s :
                                 // 否则等待执行
                                 wt.pool.awaitJoin(w, this, 0L) :
@@ -462,6 +460,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
         Thread t;
         ForkJoinWorkerThread wt;
         // doExec 执行 exec() 方法, 并保存遇到的异常
+        // s 为 该task 的status 如果为负数 就代表出现了结果 就可以直接返回 否则需要等待当前任务执行完成
         return (s = doExec()) < 0 ? s :
                 // 大于0 应该是处在等待状态  如果是内部线程 通过线程池 执行 awaitJoin  否则调用外部的 await
                 ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread) ?
@@ -612,8 +611,10 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      * worker and pool shutdown. Cancel is spec'ed not to throw any
      * exceptions, but if it does anyway, we have no recourse during
      * shutdown, so guard against this case.
+     * 关闭任务并忽略抛出的异常 workQueue.cancelAll时会触发
      */
     static final void cancelIgnoringExceptions(ForkJoinTask<?> t) {
+        // 确保status 为正数 代表任务还没完成
         if (t != null && t.status >= 0) {
             try {
                 t.cancel(false);
@@ -624,6 +625,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
 
     /**
      * Removes exception node and clears status.
+     * 清除所有的异常节点
      */
     private void clearExceptionalCompletion() {
         int h = System.identityHashCode(this);
@@ -631,12 +633,16 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
         lock.lock();
         try {
             ExceptionNode[] t = exceptionTable;
+            // 获取本task 存放异常的 slot
             int i = h & (t.length - 1);
+            // e代表是 slot 的首节点 该对象内部又维护了一个链表
             ExceptionNode e = t[i];
             ExceptionNode pred = null;
             while (e != null) {
                 ExceptionNode next = e.next;
+                // 如果该异常包裹的对象是本对象
                 if (e.get() == this) {
+                    // 将本对象从链表中移除 下个元素作为首部
                     if (pred == null)
                         t[i] = next;
                     else
@@ -646,7 +652,9 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
                 pred = e;
                 e = next;
             }
+            // 清理过期的异常
             expungeStaleExceptions();
+            // 重置异常
             status = 0;
         } finally {
             lock.unlock();
@@ -766,6 +774,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
     /**
      * If lock is available, poll stale refs and remove them.
      * Called from ForkJoinPool when pools become quiescent.
+     * 清理过期的异常对象 需要在 lock 中调用
      */
     static final void helpExpungeStaleExceptions() {
         final ReentrantLock lock = exceptionTableLock;
@@ -827,15 +836,15 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      * true}.
      *
      * @return {@code this}, to simplify usage
-     * forkJoin 任务 具备将自身拆分成更小任务的能力
+     * forkJoin 任务 具备将自身拆分成更小任务的能力  这里其实没有体现出 拆分的感觉 只是单纯的将任务设置到队列中
      */
     public final ForkJoinTask<V> fork() {
         Thread t;
-        // 如果当前线程就是 fjThread 直接 将本任务推入到任务队列中
+        // 如果当前线程就是 fjThread 直接 将本任务推入到任务队列中  推入任务的同时 会唤醒线程池处理该任务
         if ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread)
             ((ForkJoinWorkerThread) t).workQueue.push(this);
         else
-            // 从外部将任务设置进去
+            // 从外部将任务设置进去 默认情况就是将任务 按照某种hash存入到一个 workQueue中
             ForkJoinPool.common.externalPush(this);
         return this;
     }
