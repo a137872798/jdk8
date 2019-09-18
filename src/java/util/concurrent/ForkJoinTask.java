@@ -290,7 +290,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
             if ((s = status) < 0)
                 return s;
             if (U.compareAndSwapInt(this, STATUS, s, s | completion)) {
-                // NORMAL / CANCELLED/ EXCEPTIONAL 对应的异常值  >>> 16 都会大于0
+                // 代表需要唤醒
                 if ((s >>> 16) != 0)
                     synchronized (this) {
                         // 唤醒其他任务
@@ -334,7 +334,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      *
      * @param timeout using Object.wait conventions.
      *                如果当前任务还没有完成 标记成 SIGNAL 也就是待唤醒状态 并让自身沉睡
-     *                谁是该方法的调用者???
+     *                FJThread 线程在尝试获取结果的时候 (比如join方法 ) 时 发现任务被其他线程拿走 这里是阻塞等待其他线程完成任务并通知
      */
     final void internalWait(long timeout) {
         int s;
@@ -359,23 +359,24 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      * Blocks a non-worker-thread until completion.
      *
      * @return status upon completion
-     * 当外部线程执行任务时触发该方法
+     * 外部线程调用 join/invoke/get 等获取结果的方法时 会触发
      */
     private int externalAwaitDone() {
-        // CountedCompleter 是一个链式结构
+        // 如果当前task 是一个 CC 类型的任务
         int s = ((this instanceof CountedCompleter) ? // try helping
                 // 通过 外部线程协助完成任务
                 ForkJoinPool.common.externalHelpComplete(
                         (CountedCompleter<?>) this, 0) :
                 // 使用外部线程执行一个普通任务  这里必须要是队列中的 top 任务 否则不会执行
                 ForkJoinPool.common.tryExternalUnpush(this) ? doExec() : 0);
-        // 代表 本次任务没有完成
+        // 代表本次任务没有完成 有可能就是 任务还没有到top的位置被排在后面
         if (s >= 0 && (s = status) >= 0) {
             boolean interrupted = false;
             do {
                 // 将当前task 的状态标记成待唤醒
                 if (U.compareAndSwapInt(this, STATUS, s, s | SIGNAL)) {
                     synchronized (this) {
+                        // 阻塞等待结果
                         if (status >= 0) {
                             try {
                                 // 阻塞当前期待task 结果的线程
@@ -447,7 +448,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
                 ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread) ?
                         // 尝试从内部而不是 common 线程池 拉取任务
                         (w = (wt = (ForkJoinWorkerThread) t).workQueue).
-                                // 成功从wq 中拉取到任务 且执行完成 (<0 代表完成)
+                                // 成功从wq 中拉取到任务 且执行完成 (<0 代表完成)  tryUnpush 就是要求必须是 top任务
                                 tryUnpush(this) && (s = doExec()) < 0 ? s :
                                 // 当没有成功从wq 中找到匹配的任务时 等待
                                 wt.pool.awaitJoin(w, this, 0L) :
@@ -459,7 +460,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      * Implementation for invoke, quietlyInvoke.
      *
      * @return status upon completion
-     * 执行目标任务
+     * 执行目标任务  注意 这里没有要求任务在 wq 中的位置  doJoin 会要求任务必须为 top 才能执行 否则会await
      */
     private int doInvoke() {
         int s;
@@ -842,7 +843,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      * true}.
      *
      * @return {@code this}, to simplify usage
-     * forkJoin 任务 具备将自身拆分成更小任务的能力  这里其实没有体现出 拆分的感觉 只是单纯的将任务设置到队列中
+     * forkJoin 任务 具备将自身拆分成更小任务的能力
      */
     public final ForkJoinTask<V> fork() {
         Thread t;

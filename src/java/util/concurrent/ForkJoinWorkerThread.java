@@ -161,7 +161,7 @@ public class ForkJoinWorkerThread extends Thread {
      * This method is required to be public, but should never be
      * called explicitly. It performs the main run loop to execute
      * {@link ForkJoinTask}s.
-     *
+     * 执行存放在 FJPool 中 wq 内的任务
      */
     public void run() {
         // 必须确保任务队列 还未被初始化
