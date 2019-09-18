@@ -899,7 +899,7 @@ public class ForkJoinPool extends AbstractExecutorService {
          */
         volatile int scanState;    // versioned, <0: inactive; odd:scanning
         /**
-         * 记录空闲栈中前一个元素
+         * 记录上一个 空闲线程的 ctl 信息
          */
         int stackPred;             // pool stack (ctl) predecessor
         /**
@@ -1256,22 +1256,24 @@ public class ForkJoinPool extends AbstractExecutorService {
 
         /**
          * Executes the given task and any remaining local tasks.
-         * 执行给定的任务 以及剩余的其他任务  task 就是从其他的wq 中偷来的任务
+         * 执行 按照hash算法获取的 某个wq中的 base 任务并执行 之后再执行本wq 中所有剩余任务
          */
         final void runTask(ForkJoinTask<?> task) {
             if (task != null) {
                 // 设置成繁忙状态   scanState == 1 代表 该wq 对象正处在执行任务的情况
+                // 位运算就是保证 最低位是0
                 scanState &= ~SCANNING; // mark as busy
-                // 执行当前任务 同时 该任务作为 当前窃取任务
+                // 标记当前任务为偷取到的任务 注意这个任务有可能就是本队列末尾的任务 因为可能会偷到自己
                 (currentSteal = task).doExec();
+                // 执行完后 置空
                 U.putOrderedObject(this, QCURRENTSTEAL, null); // release for GC
-                // 执行本地任务
+                // 执行本队列中剩余的任务
                 execLocalTasks();
                 ForkJoinWorkerThread thread = owner;
                 // 如果当前记录的 偷取任务数量过大 将数据设置到 counter中 并清空当前计数
                 if (++nsteals < 0)      // collect on overflow
                     transferStealCount(pool);
-                // 将 scanState 恢复成0 代表在扫描状态   0 代表在扫描中也就是默认状态 1 代表正在执行任务 负数代表失活
+                // 将 scanState 最低位设置成1 代表扫描结束
                 scanState |= SCANNING;
                 if (thread != null)
                     // 后置钩子 默认是 noop
@@ -1297,7 +1299,7 @@ public class ForkJoinPool extends AbstractExecutorService {
          * or any other cancelled task. Used only by awaitJoin.
          *
          * @return true if queue empty and task not known to be done
-         * 如果队列中存在该任务 从队列中移除 并执行
+         * 如果队列中存在该任务 从队列中移除 并执行  此时task 很有可能不在 top的位置
          */
         final boolean tryRemoveAndExec(ForkJoinTask<?> task) {
             ForkJoinTask<?>[] a;
@@ -1312,7 +1314,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                         long j = ((--s & m) << ASHIFT) + ABASE;
                         // 如果当前偏移量没有找到对应元素
                         if ((t = (ForkJoinTask<?>) U.getObject(a, j)) == null)
-                            // 如果该对象就是 top元素 (top元素对应的下标为 top-1) 就代表已经被移除了
+                            // 如果该对象就是 top元素 代表刚好打算执行的任务被窃取了
                             return s + 1 == top;     // shorter than expected
                             // 判断下个元素 与传入元素是否匹配 看来这里只会执行 top or base 其他任务 即使匹配了 也因为 removed == false 而不执行
                         else if (t == task) {
@@ -1324,7 +1326,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                                     U.putOrderedInt(this, QTOP, s);
                                     removed = true;
                                 }
-                                // 如果是底部 先将 task 置空 保证偏移量不变
+                                // 如果是底部 这里替换成 空任务是为什么
                             } else if (base == b)      // replace with proxy
                                 removed = U.compareAndSwapObject(
                                         a, j, task, new EmptyTask());
@@ -1339,11 +1341,11 @@ public class ForkJoinPool extends AbstractExecutorService {
                                 U.putOrderedInt(this, QTOP, s);
                             break;                  // was cancelled
                         }
-                        // 代表没有任务可取
+                        // 代表没有任务可取  如果任务不是在 base 或者 top 即使匹配成功了 也什么都不做 这样就进入到这里 并返回false
                         if (--n == 0)
                             return false;
                     }
-                    // 如果任务已经完成 那么 执行就是失败的
+                    // 如果任务已经完成
                     if (task.status < 0)
                         return false;
                 }
@@ -1376,6 +1378,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                                     // 代表是首个任务 弹出任务
                                     if (top == s && array == a &&
                                             U.compareAndSwapObject(a, j, t, null)) {
+                                        signalWork
                                         U.putOrderedInt(this, QTOP, s - 1);
                                         U.putOrderedInt(this, QLOCK, 0);
                                         return t;
@@ -1854,6 +1857,7 @@ public class ForkJoinPool extends AbstractExecutorService {
             // 通过线程工厂初始化 ForkJoinThread 对象
             // 每个 worker 都会对应一个 wq 对象 而有些wq 可能没有对应的worker 对象
             if (fac != null && (wt = fac.newThread(this)) != null) {
+                // 启动线程 也就是开始从队列中拉取任务并执行
                 wt.start();
                 return true;
             }
@@ -1881,7 +1885,7 @@ public class ForkJoinPool extends AbstractExecutorService {
             // AC 代表活跃的工作者数量  TC 代表总的工作者数量
             long nc = ((AC_MASK & (c + AC_UNIT)) |
                     (TC_MASK & (c + TC_UNIT)));
-            // 如果传入的 c 就是 ctl 一般情况就是符合该条件
+            // 防止ctl 已经被修改
             if (ctl == c) {
                 int rs, stop;                 // check if terminating
                 // 代表当前不是 STOP 状态 那么就更新 CTL 信息 也就是增加一个 工作者 和一个活跃工作者
@@ -1898,7 +1902,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                     break;
                 }
             }
-            // 这里要求 c == 0 才会进入下次循环 一般调用的时候c != 0
+            //  后面的意思是 没有空闲线程的话 且 worker 没有满(没有达到并行度) 就会不断的创建worker
         } while (((c = ctl) & ADD_WORKER) != 0L && (int) c == 0);
     }
 
@@ -1922,7 +1926,8 @@ public class ForkJoinPool extends AbstractExecutorService {
         // 为了创建能执行任务的worker 又需要新建一个 FJThread  该 线程又会创建一个 wq 对象 这样就会有2个 wq 对象
         WorkQueue w = new WorkQueue(this, wt);
         int i = 0;                                    // assign a pool index
-        // 获取模式配置
+        // 获取模式配置  默认 mode 是 先进后出 可以设置成先进先出  这里从 pool 的 config 中获取mode 信息 并设置到 奇数位置的 wq 上
+        // 偶数wq 始终是 共享模式 且失活
         int mode = config & MODE_MASK;
         // 为当前状态上锁
         int rs = lockRunState();
@@ -1961,9 +1966,9 @@ public class ForkJoinPool extends AbstractExecutorService {
 
                 // hint 代表使用的seed  可以理解为一个随机值
                 w.hint = s;                           // use as random seed
-                // config 中携带了 数组下标 以及 mode 信息  这个mode 信息是从 pool中取出来的
+                // config 中携带了 数组下标 以及 mode 信息  这个mode 信息是从 pool中取出来的 也就是使用先进先出 还是 先进后出
                 w.config = i | mode;
-                // scanState 就是 下标的值
+                // 针对外部线程创建的wq 是 使用Inactive 作为 scanState 对于奇数位正常的wq scanState 就是下标
                 w.scanState = i;                      // publication fence
                 // 将 workThread 设置到数组中
                 ws[i] = w;
@@ -2029,7 +2034,7 @@ public class ForkJoinPool extends AbstractExecutorService {
             if ((sp = (int) (c = ctl)) != 0) {         // wake up replacement
                 if (tryRelease(c, ws[sp & m], AC_UNIT))
                     break;
-            // 当存在异常信息 且 需要添加工作者时
+                // 当存在异常信息 且 需要添加工作者时
             } else if (ex != null && (c & ADD_WORKER) != 0L) {
                 // 创建一个替代品
                 tryAddWorker(c);                      // create replacement
@@ -2040,7 +2045,7 @@ public class ForkJoinPool extends AbstractExecutorService {
         // 清除过期的 异常信息
         if (ex == null)                               // help clean on way out
             ForkJoinTask.helpExpungeStaleExceptions();
-        // 抛出异常
+            // 抛出异常
         else                                          // rethrow
             ForkJoinTask.rethrow(ex);
     }
@@ -2061,11 +2066,12 @@ public class ForkJoinPool extends AbstractExecutorService {
         int sp, i;
         WorkQueue v;
         Thread p;
-        // 当 ctl 小于0 时代表活跃的worker 太少 需要不断自旋  小于0 是什么意思???
+        // 在FJPool 被初始化的时候 ctl的 AC 和 TC 都是 并行数取反 所以是负数 这里是负数也就代表 AC 和 TC 都还没有达到要求的值
         while ((c = ctl) < 0L) {                       // too few active
-            // 如果 ctl == 0 代表没有空闲的工作者 这里新增worker 后就直接返回了
+            // 这里通过将 c 强转为 int 类型 相当于直接拿到了低32位  所以这一步才有必要 他跟上面的是不一样的
+            // 低32位记录的是 空闲线程的 栈顶元素 (空闲线程按照栈结构排列起来)
             if ((sp = (int) c) == 0) {                  // no idle workers
-                // 如果当前状态 有 ADD_WORKER的信息 代表需要增加 worker  这个标识是由谁在什么时机设置的???
+                // 只有当AC 为-1 也就是 最高的16位为-1 且其他 位都是0 才会等于0  一般情况下 只要 没有空闲线程都会创建新的worker 对象
                 if ((c & ADD_WORKER) != 0L)            // too few workers
                     // 增加工作者
                     tryAddWorker(c);
@@ -2074,21 +2080,24 @@ public class ForkJoinPool extends AbstractExecutorService {
             // 如果 ws==null 可能是 pool 本身还没初始化 或者 线程池已经终止
             if (ws == null)                            // unstarted/terminated
                 break;
-            // sp & SMASK 是什么???  推测 这里获取的是 创建 ws 时的长度   如果长度变小了 就代表可能处在终止状态
+            // sp代表低32位 也就是 idleThread 的信息  SMASK 代表获取 最低16位 也就是空闲线程对应的 wq 在wqs 中的下标
+            // 这里代表终止了
             if (ws.length <= (i = sp & SMASK))         // terminated
                 break;
-            // 如果对应的slot 没有数据 代表正在终止中
+            // 如果数据不存在 代表 正在终止中
             if ((v = ws[i]) == null)                   // terminating
                 break;
-            // ctl + 版本时间戳 避免 ABA 问题  且设置成 非失活状态
+            // SS_SEQ 刚好是针对 16~32位的地方增加一个版本号 且将状态设置为激活  这样相当于 唤醒了某个 空闲的线程
+            // 这个值 同时也是空闲线程的 scanState
             int vs = (sp + SS_SEQ) & ~INACTIVE;        // next scanState
-            // 将sp 减去最后一个 scan状态信息  这里是在做什么
+            // v 代表当前定位到的元素 看来每个线程在变成空闲线程时 会将自身的scanState 修改成那个时候的低32位ctl
             int d = sp - v.scanState;                  // screen CAS
-            // 为 ctl 增加一个 活跃线程数   将前一个栈顶信息拼接上去
+            // 为 ctl 增加一个 活跃线程数  v.stackPred 代表 针对 该空闲线程栈结构的上个空闲线程的ctl 信息 这里保留低32位数据(该信息可以定位到
+            // 上上个空闲线程的信息(比如wqs的下标))
             long nc = (UC_MASK & (c + AC_UNIT)) | (SP_MASK & v.stackPred);
-            // 更新 ctl 信息
+            // d == 0 应该是代表版本匹配的意思吧 不深究  将当前ctl 的 空闲线程信息更新
             if (d == 0 && U.compareAndSwapLong(this, CTL, c, nc)) {
-                // 代表v 当前处在活跃状态
+                // 将原空闲线程的 状态 更新成活跃
                 v.scanState = vs;                      // activate v
                 // 如果v 当前有暂停的线程 就进行唤醒
                 if ((p = v.parker) != null)
@@ -2137,7 +2146,7 @@ public class ForkJoinPool extends AbstractExecutorService {
 
     /**
      * Top-level runloop for workers, called by ForkJoinWorkerThread.run.
-     * 执行工作队列中的任务  此时 workQueue.array 还没有被初始化
+     * worker 开始执行任务 此时 wq 中的 array 还没有初始化 该线程一般都是由外部线程添加任务后被动创建的 也就是还没有设置任务
      */
     final void runWorker(WorkQueue w) {
         // 初始化 array
@@ -2146,17 +2155,15 @@ public class ForkJoinPool extends AbstractExecutorService {
         int seed = w.hint;               // initially holds randomization hint
         int r = (seed == 0) ? 1 : seed;  // avoid 0 for xorShift
         for (ForkJoinTask<?> t; ; ) {
-            // 也就是这里会不断扫描队列中的任务并执行 一旦没有任务了 就阻塞等待新任务的添加
-
-            // 尝试扫描任务 如果不为空 执行该任务  有可能偷到的队列就是传入的队列吗???
+            // 扫描任务 扫描到就执行 注意当前w 内还没有任务 能往本 wq 中添加任务的只有本FJThread 线程
+            // 一般来说一定会扫描到某个任务 除非 这个pool 中都没有任务了（最差情况会往本队列中"偷"任务）
             if ((t = scan(w, r)) != null)
-                // 这个w 是当前执行任务的队列 而t 则是从其他队列中偷来的任务
-                // 这里使用该 wq 执行偷来的任务 同时执行 对列中剩余的任务
                 w.runTask(t);
-                // 如果没有扫描到任务 就阻塞
+                // 如果没有扫描到任务 就阻塞 等待新任务 如果不满足 阻塞条件比如线程超量 会返回false 该线程直接被回收
             else if (!awaitWork(w, r))
+                // 这里的break 会使得 FJThread 被回收
                 break;
-            // 使用位运算更新 r 后重新扫描
+            // 使用位运算更新 r 后重新扫描  就是尽可能的打乱拉取的队列
             r ^= r << 13;
             r ^= r >>> 17;
             r ^= r << 5; // xorshift
@@ -2194,9 +2201,9 @@ public class ForkJoinPool extends AbstractExecutorService {
                 ForkJoinTask<?> t;
                 int b, n;
                 long c;
-                // 获取一个随机的 任务队列
+                // 获取一个随机的 任务队列  这里是有可能指向自己的
                 if ((q = ws[k]) != null) {
-                    // 代表该随机获取的 队列中存在要处理的任务 每个线程不是直接处理对应的wq 吗 这样不会发生竞争吗
+                    // 确保该任务队列不为空
                     if ((n = (b = q.base) - q.top) < 0 &&
                             (a = q.array) != null) {      // non-empty
                         // 找到底部元素的偏移量  看来从其他队列拉取就是拉取底部任务  因为拉取 顶部更容易发生竞争
@@ -2213,51 +2220,56 @@ public class ForkJoinPool extends AbstractExecutorService {
                                     q.base = b + 1;
                                     // 代表还有其他待唤醒任务
                                     if (n < -1)       // signal others
-                                        // 唤醒工作者去处理其他任务  这里只是唤醒应该不会阻塞当前执行t任务的线程
+                                        // 尝试唤醒空闲的线程去执行任务 如果没有空闲线程就创建新线程 这里要 base 与 top的差值 超过1
                                         signalWork(ws, q);
                                     // 这里将找到的任务返回
                                     return t;
                                 }
-                                // 如果已经失活 就要尝试恢复线程
+                                // 如果已经失活 就要尝试恢复线程 在下面会被设置成失活 也就是第一轮没有找到任务 先设置成失活
+                                // 如果第二轮又找到了任务 进行恢复
                             } else if (oldSum == 0 &&   // try to activate
                                     w.scanState < 0)
-                                // 此时 c 是失活前的 ctl ctl & m 好像是获取到 栈顶的wq对象
+                                // 该方法跟 signalWork 基本相同 就是将一个失活的线程恢复成 活跃状态
                                 tryRelease(c = ctl, ws[m & (int) c], AC_UNIT);
                         }
-                        // 更新 ss 的值
+                        // 代表跟 其他线程竞争失败  也有可能是选中的 wq没有任务了
+                        // 如果当前是失活的 重新获取scanState 因为可能 当前会恢复活跃状态
                         if (ss < 0)                   // refresh
                             ss = w.scanState;
                         // 更新随机因子后
                         r ^= r << 1;
                         r ^= r >>> 3;
                         r ^= r << 10;
-                        // 与 wqs 取余 后 便于获取下一个 wq 对象 再拉取待处理任务
+                        // 与 wqs 取余 后 会获取到不同的 wq 对象
                         origin = k = r & m;           // move and rescan
                         oldSum = checkSum = 0;
                         continue;
                     }
-                    // 增加 base 的值
+                    // 增加 base 的值  当base == top 时 会走这里
                     checkSum += b;
                 }
-                // 原本 每次 k+1 代表获取下一个元素 如果取余与origin相等 代表已经轮了一圈
-                // 正常情况 只要 slot 中有对应的 wq 对象就会更新 随机因子 只有当 slot为空时 才会挨个去尝试获取wq
+
+                // 当 top == base 或者wq == null （后者应该不可能） 且 轮询了一圈后 进入该方法
                 if ((k = (k + 1) & m) == origin) {    // continue until stable
+                    // 代表当前活跃线程过多 尝试使线程失活
                     if ((ss >= 0 || (ss == (ss = w.scanState))) &&
+                            // 这个条件先不管  当多次没有命中 wq 的 任务时 就会将 该线程进行失活处理
                             oldSum == (oldSum = checkSum)) {
                         // 如果发现已经失活 代表已经走了2轮  第一轮都没有找到就设置成失活 第二轮还是没有 就会退出自旋
                         if (ss < 0 || w.qlock < 0)    // already inactive
                             break;
-                        // 设置成失活
+                        // 设置成失活  现在 后32位 应该就是  失活 + 线程在wqs中的下标  暂时没有版本信息
                         int ns = ss | INACTIVE;       // try to inactivate
                         // 减少活跃线程
                         long nc = ((SP_MASK & ns) |
                                 (UC_MASK & ((c = ctl) - AC_UNIT)));
-                        // stackPred 代表 该线程失活前 记录的 ctl 状态
+                        // 因为当前的 ctl 可能就包含某个空闲线程的信息这里 通过 stackPred 来保存空闲线程信息
                         w.stackPred = (int) c;         // hold prev stack top
-                        // 扫描状态变成 ns
+                        // 扫描状态变成 ns  也就是扫描状态包含了 是否活跃，版本号 以及 下标信息
                         U.putInt(w, QSCANSTATE, ns);
                         // 更新  ctl
                         if (U.compareAndSwapLong(this, CTL, c, nc))
+                            // 现在 ss 就是失活的 这样ss 就 <0 了
                             ss = ns;
                         else
                             w.scanState = ss;         // back out
@@ -2282,14 +2294,15 @@ public class ForkJoinPool extends AbstractExecutorService {
      * @param w the calling worker
      * @param r a random seed (for spins)   代表一个随机数
      * @return false if the worker should terminate
+     * 当线程没有偷取到任务时 尝试等待 此时该线程是 失活状态的
      */
     private boolean awaitWork(WorkQueue w, int r) {
-        // 代表当前队列 已经终止 返回false
+        // 线程池 正在关闭 不需要等待
         if (w == null || w.qlock < 0)                 // w is terminating
             return false;
-        // pred 是失活前的ctl
+        // 获取失活前的 ctl
         for (int pred = w.stackPred, spins = SPINS, ss; ; ) {
-            // scanState 非负数 就代表正在扫描 就跳出循环
+            // scanState 非负数 就代表正在扫描 就跳出循环  一般来说应该是负数
             if ((ss = w.scanState) >= 0)
                 break;
                 // 如果自旋次数大于0
@@ -2308,7 +2321,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                             (j = pred & SMASK) < ws.length &&
                             (v = ws[j]) != null &&        // see if pred parking
                             (v.parker == null || v.scanState >= 0))
-                        // 这里 spins 已经变成0 了 有重新设置保证能继续自旋
+                        // 这里 spins 已经变成0 了 又重新设置保证能继续自旋
                         spins = SPINS;                // continue spinning
                 }
                 // 小于0 代表w 已经终止 所以返回false  不考虑阻塞
@@ -2317,19 +2330,19 @@ public class ForkJoinPool extends AbstractExecutorService {
                 // 没有被打断
             else if (!Thread.interrupted()) {
                 long c, prevctl, parkTime, deadline;
-                // 获取当前活跃工作者数量
+                // 获取当前活跃工作者数量  因为 一开始 ac 是负的并行度 所以要加上并行度才是真正的ac数量
                 int ac = (int) ((c = ctl) >> AC_SHIFT) + (config & SMASK);
                 // 如果当前没有活跃线程数 且 尝试终止成功 或者 当前已经 是 STOP 就返回false
                 if ((ac <= 0 && tryTerminate(false, false)) ||
                         (runState & STOP) != 0)           // pool terminating
                     return false;
-                // 如果当前没有活跃线程数  w.scanState 和 ctl 是什么关系 很多地方都 有 ss == c 的判断
+                // 如果当前没有活跃线程数  且 低32位信息一致  ss 一致应该是在校验版本 这个就不深究了
                 if (ac <= 0 && ss == (int) c) {        // is last waiter
-                    // 获取该线程失活前的 ctl 并在 增加AC 数量后 拼接
+                    // 获取失活前 ctl 的 低32位信息 与 增加ac 后的信息拼接起来
                     prevctl = (UC_MASK & (c + AC_UNIT)) | (SP_MASK & pred);
                     // 获取总的线程数
                     int t = (short) (c >>> TC_SHIFT);  // shrink excess spares
-                    // 这里必须要求 只剩下 一个工作线程才能阻塞 否则不会阻塞
+                    // 代表线程数还是超量 不进行阻塞 t 如果等于0 代表刚好达到阈值 因为一开始tc 就是 负并行度
                     if (t > 2 && U.compareAndSwapLong(this, CTL, c, prevctl))
                         return false;                 // else use timed wait
                     // 获取最大等待时间
@@ -2350,10 +2363,11 @@ public class ForkJoinPool extends AbstractExecutorService {
                 // 唤醒后将 park 相关参数置空
                 U.putOrderedObject(w, QPARKER, null);
                 U.putObject(wt, PARKBLOCKER, null);
-                // 代表正在扫描中 退出循环 否则下次自旋又会进入阻塞
+                // 确保线程已经 重新激活 退出await 状态
                 if (w.scanState >= 0)
                     break;
-                // 代表虽然本次阻塞结束 但是还是失活状态
+                // 代表虽然本次阻塞结束 但是还是失活状态  这样直接放弃掉该线程 (同时要 parkTime != 0 也就是时间到了醒来 如果是 未设置时间
+                // 即使醒来失活 也不会返回false)
                 if (parkTime != 0L && ctl == c &&
                         deadline - System.nanoTime() <= 0L &&
                         // CAS 更改状态后 返回false
@@ -2499,7 +2513,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                         int b;
                         // 找到偷取者的情况 还是增加了 checkSum 的值
                         checkSum += (b = v.base);
-                        // 获取 偷取者当前等待的任务
+                        // 这里有可能 偷窃者要执行的任务刚好又被其他线程取走了
                         ForkJoinTask<?> next = v.currentJoin;
                         // 如果目标任务已经完成了 或者 当前wq 等待的任务不是 传入的任务 或者偷取者偷取的任务不是当前任务  退出外层循环
                         if (subtask.status < 0 || j.currentJoin != subtask ||
@@ -2510,11 +2524,11 @@ public class ForkJoinPool extends AbstractExecutorService {
                             // 如果 偷取者的 join 任务为null 退出到外层也就是不考虑 帮助偷取者执行任务
                             if ((subtask = next) == null)
                                 break descent;
-                            // 将j 设置为v 查询 偷取者的偷取者
+                            // 将j 设置为v 查询 偷取者的偷取者 并帮助执行任务
                             j = v;
                             break;
                         }
-                        // 获取 底部元素
+                        // 有任务可以获取的情况默认就是拿走 base 任务并执行
                         int i = (((a.length - 1) & b) << ASHIFT) + ABASE;
                         ForkJoinTask<?> t = ((ForkJoinTask<?>)
                                 U.getObjectVolatile(a, i));
@@ -2535,13 +2549,14 @@ public class ForkJoinPool extends AbstractExecutorService {
                                     // 更新当前偷取的任务 并执行
                                     U.putOrderedObject(w, QCURRENTSTEAL, t);
                                     t.doExec();        // clear local tasks too
-                                    // 完成偷取的任务后 如果目标任务还没有完成 且 顶部增加了新的任务 从队列中弹出任务并执行  这里是弹出 top任务
+                                    // 完成偷取的任务后 如果目标任务还没有完成
                                 } while (task.status >= 0 &&
+                                        // 这里代表 执行 base 任务时 fork 出了新的任务 那么就要继续执行
                                         w.top != top &&
                                         (t = w.pop()) != null);
                                 // 还原偷取任务
                                 U.putOrderedObject(w, QCURRENTSTEAL, ps);
-                                // 当上面 w.top == top 时 会返回 也就是将 后面新增 的任务完成后在这里会退出
+                                // 发现自己有新任务就不再帮助 或者窃取者没有任务可以执行
                                 if (w.base != w.top)
                                     return;            // can't further help
                             }
@@ -2573,11 +2588,14 @@ public class ForkJoinPool extends AbstractExecutorService {
                 (ws = workQueues) == null || (m = ws.length - 1) <= 0 ||
                 (pc = config & SMASK) == 0)           // parallelism disabled
             canBlock = false;
+        // 代表存在空闲线程 就 唤醒空闲线程
         else if ((sp = (int) (c = ctl)) != 0)      // release idle worker
-            // 尝试唤醒等待的线程 如果唤醒成功就能阻塞该线程 目的就是不减少当前可工作的线程
-            // 又是 使用 ctl & m 的方式获取下标
+            // 成功唤醒的情况下 代表可以阻塞本线程
             canBlock = tryRelease(c, ws[sp & m], 0L);
         else {
+
+            // 需要创建一个新线程
+
             // 获取活跃线程数
             int ac = (int) (c >> AC_SHIFT) + pc;
             // 总线程数
@@ -2598,7 +2616,7 @@ public class ForkJoinPool extends AbstractExecutorService {
             // 繁忙数 没有总线程数的2倍  或者 ctl 不为c 不能阻塞
             if (nbusy != (tc << 1) || ctl != c)
                 canBlock = false;                 // unstable or stale
-            // 总线程数 大于 并行数 且 活跃数 > 1   且调用者队列为null
+                // 总线程数 大于 并行数 且 活跃数 > 1   且调用者队列为null
             else if (tc >= pc && ac > 1 && w.isEmpty()) {
                 // 减少活跃线程
                 long nc = ((AC_MASK & (c - AC_UNIT)) |
@@ -3276,8 +3294,9 @@ public class ForkJoinPool extends AbstractExecutorService {
         this.ueh = handler;
         // 代表 后15位都是 并行度相关信息 | mode 代表配置信息    mode 默认是0
         this.config = (parallelism & SMASK) | mode;
-        // np 代表 负的并行度???
+        // 在FJPool 被初始化时 ctl 使用 并行度取反来设置
         long np = (long) (-parallelism); // offset ctl counts
+        // 这里 AC 和 TC 都用了并行取反 作为值
         this.ctl = ((np << AC_SHIFT) & AC_MASK) | ((np << TC_SHIFT) & TC_MASK);
     }
 

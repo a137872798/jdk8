@@ -293,7 +293,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
                 // 代表需要唤醒
                 if ((s >>> 16) != 0)
                     synchronized (this) {
-                        // 唤醒其他任务
+                        // 唤醒其他正在等待结果的线程 （也就是调用join 的线程）
                         notifyAll();
                     }
                 return completion;
@@ -359,7 +359,8 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      * Blocks a non-worker-thread until completion.
      *
      * @return status upon completion
-     * 外部线程调用 join/invoke/get 等获取结果的方法时 会触发
+     * 外部线程调用 join/invoke/get 等获取结果的方法时 会触发 这里需要阻塞外部线程 而如果 是工作线程没有直接拿到任务的时候 会尝试补偿
+     * 也就是窃取其他线程的任务来执行 充分利用cpu
      */
     private int externalAwaitDone() {
         // 如果当前task 是一个 CC 类型的任务
@@ -368,8 +369,8 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
                 ForkJoinPool.common.externalHelpComplete(
                         (CountedCompleter<?>) this, 0) :
                 // 使用外部线程执行一个普通任务  这里必须要是队列中的 top 任务 否则不会执行
+                // 因为任务是有 优先级的 父任务是依赖于子任务的 而 按照栈的顺序 子任务就是会设置到 top上
                 ForkJoinPool.common.tryExternalUnpush(this) ? doExec() : 0);
-        // 代表本次任务没有完成 有可能就是 任务还没有到top的位置被排在后面
         if (s >= 0 && (s = status) >= 0) {
             boolean interrupted = false;
             do {
@@ -448,11 +449,12 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
                 ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread) ?
                         // 尝试从内部而不是 common 线程池 拉取任务
                         (w = (wt = (ForkJoinWorkerThread) t).workQueue).
-                                // 成功从wq 中拉取到任务 且执行完成 (<0 代表完成)  tryUnpush 就是要求必须是 top任务
+                                // 成功从wq 中拉取到任务 且执行完成 (<0 代表完成)  tryUnpush 就是要求必须是 top任务(因为 fork/join 本身
+                                // 就会将优先级高的任务 填充到top 中 而后面的任务又是依赖前面的任务的所以只有该任务刚好是优先级最高的任务时才能直接执行)
                                 tryUnpush(this) && (s = doExec()) < 0 ? s :
-                                // 当没有成功从wq 中找到匹配的任务时 等待
+                                // 当没有成功从wq 中找到匹配的任务时 等待 这里有2种可能一种是 任务不在 top位 还有一种是刚好被其他 worker 窃取了
                                 wt.pool.awaitJoin(w, this, 0L) :
-                        // 从外部等待执行
+                        // 如果是从外部调用join
                         externalAwaitDone();
     }
 
@@ -472,7 +474,6 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
                 // 大于0 应该是处在等待状态  如果是内部线程 通过线程池 执行 awaitJoin  否则调用外部的 await
                 ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread) ?
                         (wt = (ForkJoinWorkerThread) t).pool.
-                                // 将本任务添加到workQueue中 并等待执行
                                 awaitJoin(wt.workQueue, this, 0L) :
                         externalAwaitDone();
     }
@@ -843,7 +844,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      * true}.
      *
      * @return {@code this}, to simplify usage
-     * forkJoin 任务 具备将自身拆分成更小任务的能力
+     * 该方法 一般是在 exec() 方法中调用的 可能会被 FJThread 执行 也可能会被 外部线程执行
      */
     public final ForkJoinTask<V> fork() {
         Thread t;
