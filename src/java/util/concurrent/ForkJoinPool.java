@@ -2448,7 +2448,6 @@ public class ForkJoinPool extends AbstractExecutorService {
                         origin = k = r & m;      // move and restart
                         oldSum = checkSum = 0;
                         // 这里代表没有找到匹配任务 h = -1 或者 没有找到 对应的wq h=0
-                        // TODO 这里还没有看懂
                     } else if ((k = (k + 1) & m) == origin) {
                         if (oldSum == (oldSum = checkSum))
                             break;

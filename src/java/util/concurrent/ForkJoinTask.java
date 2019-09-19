@@ -274,6 +274,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
     // positive
 
     static final int SIGNAL = 0x00010000;  // must be >= 1 << 16
+    // 低16 位的掩码
     static final int SMASK = 0x0000ffff;  // short bits for tags
 
     /**
@@ -1497,6 +1498,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      * @return {@code true} if successful; i.e., the current value was
      * equal to e and is now tag.
      * @since 1.8
+     * short 代表最低是16位 这里是将 低16位 从0 变成1
      */
     public final boolean compareAndSetForkJoinTaskTag(short e, short tag) {
         for (int s; ; ) {

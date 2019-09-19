@@ -216,51 +216,100 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * publication.
      */
 
+    /**
+     * 当前对象的结果 或者一个包装的异常对象(AltResult)  result 不会设置为null 而是用一个 NIL 对象 也就是 AltResult(null) 来替换
+     */
     volatile Object result;       // Either the result or boxed AltResult
+    /**
+     * 任务栈 内部是一个链表结构  内部通过next 字段关联
+     */
     volatile Completion stack;    // Top of Treiber stack of dependent actions
 
+    /**
+     * 设置结果到 result字段
+     * @param r
+     * @return
+     */
     final boolean internalComplete(Object r) { // CAS from null to r
         return UNSAFE.compareAndSwapObject(this, RESULT, null, r);
     }
 
+    /**
+     * 使用CAS 尝试将 stack 从 cmp 替换成 val
+     * @param cmp
+     * @param val
+     * @return
+     */
     final boolean casStack(Completion cmp, Completion val) {
         return UNSAFE.compareAndSwapObject(this, STACK, cmp, val);
     }
 
     /** Returns true if successfully pushed c onto stack. */
+    /**
+     * 尝试将 某个Completion 推入到栈结构中
+     * @param c
+     * @return
+     */
     final boolean tryPushStack(Completion c) {
+        // 获取当前栈顶对象
         Completion h = stack;
+        // 将 h 设置到 c 的 next 上
         lazySetNext(c, h);
+        // CAS 替换 stack 信息  这样通过stack 获取到 栈顶元素后 可以通过next 方法获取到之前的栈顶元素
         return UNSAFE.compareAndSwapObject(this, STACK, h, c);
     }
 
     /** Unconditionally pushes c onto stack, retrying if necessary. */
+    /**
+     * 自旋直到某个任务被成功添加到 stack上
+     * @param c
+     */
     final void pushStack(Completion c) {
         do {} while (!tryPushStack(c));
     }
 
     /* ------------- Encoding and decoding outcomes -------------- */
 
+    /**
+     * 异常的包装对象
+     */
     static final class AltResult { // See above
         final Throwable ex;        // null only for NIL
         AltResult(Throwable x) { this.ex = x; }
     }
 
     /** The encoding of the null value. */
+    /**
+     * 包装了 null 的结果对象
+     */
     static final AltResult NIL = new AltResult(null);
 
     /** Completes with the null value, unless already completed. */
+    /**
+     * 将result 的 null 替换成 NIL
+     * @return
+     */
     final boolean completeNull() {
         return UNSAFE.compareAndSwapObject(this, RESULT, null,
                                            NIL);
     }
 
     /** Returns the encoding of the given non-exceptional value. */
+    /**
+     * 如果 t 是 null 将其包装成 NIL
+     * @param t
+     * @return
+     */
     final Object encodeValue(T t) {
         return (t == null) ? NIL : t;
     }
 
     /** Completes with a non-exceptional result, unless already completed. */
+    /**
+     * 将结果填充到 result 字段中 如果是 null 就要替换成NIL
+     * @param t
+     * @return
+     */
     final boolean completeValue(T t) {
         return UNSAFE.compareAndSwapObject(this, RESULT, null,
                                            (t == null) ? NIL : t);
@@ -269,6 +318,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     /**
      * Returns the encoding of the given (non-null) exception as a
      * wrapped CompletionException unless it is one already.
+     * 将异常包装成 CompletionException 后包装成 AltResult 并返回
      */
     static AltResult encodeThrowable(Throwable x) {
         return new AltResult((x instanceof CompletionException) ? x :
@@ -276,6 +326,11 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     }
 
     /** Completes with an exceptional result, unless already completed. */
+    /**
+     * 将异常包装后设置到 Result 中
+     * @param x
+     * @return
+     */
     final boolean completeThrowable(Throwable x) {
         return UNSAFE.compareAndSwapObject(this, RESULT, null,
                                            encodeThrowable(x));
@@ -289,10 +344,13 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * relay of an existing CompletionException.
      */
     static Object encodeThrowable(Throwable x, Object r) {
+        // 如果异常不是 CompletionException 就包装成对应的类型
         if (!(x instanceof CompletionException))
             x = new CompletionException(x);
+        // 如果 x 已经是该类型了 且 r 中的异常信息 等同于 x  直接返回r
         else if (r instanceof AltResult && x == ((AltResult)r).ex)
             return r;
+        // 否则将 包装后的 CompletionException 包装成 AltResult 对象 并返回
         return new AltResult(x);
     }
 
@@ -303,6 +361,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * (which must have been the result of a source future) if it is
      * equivalent, i.e. if this is a simple propagation of an
      * existing CompletionException.
+     * 根据情况 将result 设置为 包装对象
      */
     final boolean completeThrowable(Throwable x, Object r) {
         return UNSAFE.compareAndSwapObject(this, RESULT, null,
@@ -327,12 +386,14 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         return (((r instanceof AltResult) &&
                  (x = ((AltResult)r).ex) != null &&
                  !(x instanceof CompletionException)) ?
+                // 如果是异常对象 生成一个副本对象 否则 直接返回
                 new AltResult(new CompletionException(x)) : r);
     }
 
     /**
      * Completes with r or a copy of r, unless already completed.
      * If exceptional, r is first coerced to a CompletionException.
+     * 包装结果后设置到 result 中
      */
     final boolean completeRelay(Object r) {
         return UNSAFE.compareAndSwapObject(this, RESULT, null,
@@ -341,28 +402,36 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
 
     /**
      * Reports result using Future.get conventions.
+     * 当调用 get() 方法时 应该是类似过滤结果
      */
     private static <T> T reportGet(Object r)
         throws InterruptedException, ExecutionException {
+        // 如果拉取到的结果为null 代表本次尝试获取 被打断了
         if (r == null) // by convention below, null means interrupted
             throw new InterruptedException();
+        // 如果 r 已经被包装
         if (r instanceof AltResult) {
             Throwable x, cause;
+            // 没有异常信息 也就是 NLT 直接返回null
             if ((x = ((AltResult)r).ex) == null)
                 return null;
+            // 抛出对应的类型
             if (x instanceof CancellationException)
                 throw (CancellationException)x;
+            // CompletionException 内部包装了真正的异常  这里将异常 包装为 ExecutionException 并抛出
             if ((x instanceof CompletionException) &&
                 (cause = x.getCause()) != null)
                 x = cause;
             throw new ExecutionException(x);
         }
+        // 正常返回
         @SuppressWarnings("unchecked") T t = (T) r;
         return t;
     }
 
     /**
      * Decodes outcome to return result or throw unchecked exception.
+     * 当调用 join 方法后触发 同样是评估返回结果
      */
     private static <T> T reportJoin(Object r) {
         if (r instanceof AltResult) {
@@ -387,16 +456,22 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * debugging, and tracking asynchronous activities.
      *
      * @since 1.8
+     * 代表异步任务接口
      */
     public static interface AsynchronousCompletionTask {
     }
 
+    /**
+     * 这里 根据 FJPool的 公共并行度是否 超过1 确定是否使用 公共线程池 也就是如果并行度过低 可能要使用其他线程池
+     */
     private static final boolean useCommonPool =
         (ForkJoinPool.getCommonPoolParallelism() > 1);
 
     /**
      * Default executor -- ForkJoinPool.commonPool() unless it cannot
      * support parallelism.
+     * 判断是否允许并行 允许的话直接使用 FJPool 的common线程池 否则使用一个简易的线程池对象 不具备维护池化功能 而是直接创建新线程执行任务
+     * 一般情况下都会使用 fjPool 处理任务
      */
     private static final Executor asyncPool = useCommonPool ?
         ForkJoinPool.commonPool() : new ThreadPerTaskExecutor();
@@ -409,24 +484,36 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     /**
      * Null-checks user executor argument, and translates uses of
      * commonPool to asyncPool in case parallelism disabled.
+     * 针对线程池相关信息 进行参数校验
      */
     static Executor screenExecutor(Executor e) {
+        // 如果 不允许使用common 就替换成ThreadPerTaskExecutor
         if (!useCommonPool && e == ForkJoinPool.commonPool())
             return asyncPool;
         if (e == null) throw new NullPointerException();
+        // 非空情况下 直接返回 common
         return e;
     }
 
     // Modes for Completion.tryFire. Signedness matters.
-    static final int SYNC   =  0;
-    static final int ASYNC  =  1;
-    static final int NESTED = -1;
+    /**
+     * 代表任务的触发模式
+     */
+    static final int SYNC   =  0; // 同步模式
+    static final int ASYNC  =  1; // 异步模式
+    static final int NESTED = -1; // 嵌套模式
 
     /* ------------- Base Completion classes and operations -------------- */
 
+    /**
+     * 该对象作为 FJTask 的子类 同时实现异步任务接口
+     */
     @SuppressWarnings("serial")
     abstract static class Completion extends ForkJoinTask<Void>
         implements Runnable, AsynchronousCompletionTask {
+        /**
+         * 内部使用链式结构   当替换 CompletableFuture 的 stack 时 会将之前的 结果 设置到字段的 next 中
+         */
         volatile Completion next;      // Treiber stack link
 
         /**
@@ -434,18 +521,38 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
          * dependent that may need propagation, if one exists.
          *
          * @param mode SYNC, ASYNC, or NESTED
+         *             传入指定的 触发类型 并触发任务
          */
         abstract CompletableFuture<?> tryFire(int mode);
 
         /** Returns true if possibly still triggerable. Used by cleanStack. */
+        /**
+         * 判断当前任务是否还能被触发
+         * @return
+         */
         abstract boolean isLive();
 
+        /**
+         * 使用异步模式 触发任务
+         */
         public final void run()                { tryFire(ASYNC); }
+
+        /**
+         * 使用异步模式触发任务 且返回true 代表本次任务已经完成  针对CC 任务 这里会返回false
+         * @return
+         */
         public final boolean exec()            { tryFire(ASYNC); return true; }
+
+        // 获取结果的 函数始终是空实现
         public final Void getRawResult()       { return null; }
         public final void setRawResult(Void v) {}
     }
 
+    /**
+     * 就是将 给定的 c 的next 属性替换成需要的对象
+     * @param c
+     * @param next
+     */
     static void lazySetNext(Completion c, Completion next) {
         UNSAFE.putOrderedObject(c, NEXT, next);
     }
@@ -453,6 +560,9 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     /**
      * Pops and tries to trigger all reachable dependents.  Call only
      * when known to be done.
+     * 尝试触发所有可达的依赖
+     * 该方法会从当前栈顶 开始 执行 tryfire 方法并将所有经过的CompletableFuture 对象的 任务全部转移到当前对象的栈顶
+     * 全部转移完后 又会回到this 并按照从栈顶往下的顺序 执行 tryFire 相当于一个 拓扑算法
      */
     final void postComplete() {
         /*
@@ -461,39 +571,60 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
          * pushing others to avoid unbounded recursion.
          */
         CompletableFuture<?> f = this; Completion h;
+        // 确保 当前存在栈顶任务 （该f 可能是原对象 也可能是 执行fire 后返回的结果对象）
         while ((h = f.stack) != null ||
+                // 这里 f 已经不是 原对象了 如果 这时将 f 重新指向栈顶 且还有元素
                (f != this && (h = (f = this).stack) != null)) {
             CompletableFuture<?> d; Completion t;
+            // 获取栈顶的下个任务 用该任务来替换栈顶
             if (f.casStack(h, t = h.next)) {
+                // 如果存在 原栈顶的下个元素
                 if (t != null) {
+                    // 如果 f 已经指向其他节点 将其他节点 栈顶的任务转移到 当前任务中
                     if (f != this) {
                         pushStack(h);
                         continue;
                     }
+                    // 将原栈顶 与next 节点关联置空
                     h.next = null;    // detach
                 }
+                // 以嵌套模式 触发栈顶任务 并返回结果 如果结果为null  f 还是自身  否则 f 修改成 原栈顶触发后的结果对象 并将结果对象中的元素 全部转移到 this 中
+                // 注意从其他future 中转移过来的任务 会按倒序执行
+                // 最终在其他 路线上的任务都会被转移到 this 中 并在next 存在的情况下 不断调用 tryFire(NESTED)
                 f = (d = h.tryFire(NESTED)) == null ? this : d;
             }
         }
     }
 
     /** Traverses stack and unlinks dead Completions. */
+    /**
+     * 遍历栈 并将 已经死亡的任务清除
+     */
     final void cleanStack() {
         for (Completion p = null, q = stack; q != null;) {
+            // 从栈顶开始往下遍历
             Completion s = q.next;
+            // 判断当前任务是否还能触发  由子类实现
             if (q.isLive()) {
+                // p保留本次的结果
                 p = q;
+                // q代表next节点
                 q = s;
             }
+            // 这里代表 p 被置空了 需要被丢弃
             else if (p == null) {
+                // 相当于 将q 从链表中移除 将s 也就是 q.next 作为新的栈顶
                 casStack(q, s);
                 q = stack;
             }
+            // 进入这里 p 代表 q 的上个节点  这里将上个节点指向他就代表 q 节点本身无效了 对应上面 q.isLive() = false
             else {
                 p.next = s;
+                // 判断q 的上个节点是否有效  一般来说应该是有效的 不排除之后突然无效的情况 有效的情况下 将q 指向s
                 if (p.isLive())
                     q = s;
                 else {
+                    // 如果 之后 p 无效了 就代表需要被剔除 将q 重新指向栈顶
                     p = null;  // restart
                     q = stack;
                 }
@@ -506,10 +637,25 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     /** A Completion with a source, dependent, and executor. */
     @SuppressWarnings("serial")
     abstract static class UniCompletion<T,V> extends Completion {
+        /**
+         * 代表执行该任务的线程池  如果有线程池 应该是意味着 这是一个 异步任务
+         */
         Executor executor;                 // executor to use (null if none)
+        /**
+         * 该任务需要 依赖于其他任务
+         */
         CompletableFuture<V> dep;          // the dependent to complete
+        /**
+         * 该任务是从那个 future 对象发出的
+         */
         CompletableFuture<T> src;          // source for action
 
+        /**
+         * 通过传入的线程池对象进行初始化
+         * @param executor
+         * @param dep
+         * @param src
+         */
         UniCompletion(Executor executor, CompletableFuture<V> dep,
                       CompletableFuture<T> src) {
             this.executor = executor; this.dep = dep; this.src = src;
@@ -520,22 +666,34 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
          * be triggerable. Uses FJ tag bit to ensure that only one
          * thread claims ownership.  If async, starts as task -- a
          * later call to tryFire will run action.
+         * 判断该 action 是否可以运行 只有当被触发时才能调用
          */
         final boolean claim() {
             Executor e = executor;
+            // 将该任务的 低16位设置成1  这个应该就是单纯的防止并发 代表该task 已经有某个 visitor 了
             if (compareAndSetForkJoinTaskTag((short)0, (short)1)) {
+                // 因为内部没有线程池 无法异步执行 返回true 在外部就会同步执行
                 if (e == null)
                     return true;
+                // 使用线程池执行 返回false
                 executor = null; // disable
                 e.execute(this);
             }
             return false;
         }
 
+        /**
+         * 依赖的任务还存在 代表还处在存活状态
+         * @return
+         */
         final boolean isLive() { return dep != null; }
     }
 
     /** Pushes the given completion (if it exists) unless done. */
+    /**
+     * 将 UniCompletion 设置到栈中
+     * @param c
+     */
     final void push(UniCompletion<?,?> c) {
         if (c != null) {
             while (result == null && !tryPushStack(c))
@@ -1002,8 +1160,17 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     /* ------------- Two-input Completions -------------- */
 
     /** A Completion for an action with two sources */
+    /**
+     * 代表该对象有 2个 source 和一个 depend
+     * @param <T>
+     * @param <U>
+     * @param <V>
+     */
     @SuppressWarnings("serial")
     abstract static class BiCompletion<T,U,V> extends UniCompletion<T,V> {
+        /**
+         * 第二个 source
+         */
         CompletableFuture<U> snd; // second source for action
         BiCompletion(Executor executor, CompletableFuture<V> dep,
                      CompletableFuture<T> src, CompletableFuture<U> snd) {
@@ -1012,19 +1179,39 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     }
 
     /** A Completion delegating to a BiCompletion */
+    /**
+     * 实现 Comoletion 的核心方法  内部包含一个 代理对象
+     */
     @SuppressWarnings("serial")
     static final class CoCompletion extends Completion {
+        /**
+         * 代表 二元函数 即传入2个类型返回一个类型
+         */
         BiCompletion<?,?,?> base;
         CoCompletion(BiCompletion<?,?,?> base) { this.base = base; }
+
+        /**
+         * 按照某种模式来触发任务
+         * @param mode SYNC, ASYNC, or NESTED
+         * @return
+         */
         final CompletableFuture<?> tryFire(int mode) {
             BiCompletion<?,?,?> c; CompletableFuture<?> d;
+            // 如果代理对象为null 或者 触发代理对象的结果为null 返回null
             if ((c = base) == null || (d = c.tryFire(mode)) == null)
                 return null;
+            // 执行一次后就将代理对象置空 并返回执行结果
             base = null; // detach
             return d;
         }
+
+        /**
+         * 判断是否可激活
+         * @return
+         */
         final boolean isLive() {
             BiCompletion<?,?,?> c;
+            // 代理对象存在 且 代理对象 依赖的其他任务不为空
             return (c = base) != null && c.dep != null;
         }
     }
@@ -1126,26 +1313,54 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         return d;
     }
 
+    /**
+     * 基于 accpet 动作  accept 本身是接受2个 参数 不返回结果
+     * @param <T>
+     * @param <U>
+     */
     @SuppressWarnings("serial")
     static final class BiAccept<T,U> extends BiCompletion<T,U,Void> {
+        /**
+         * 该对象用于 连接 2个 source CompletableFuture 和 depend CompletableFuture
+         */
         BiConsumer<? super T,? super U> fn;
         BiAccept(Executor executor, CompletableFuture<Void> dep,
                  CompletableFuture<T> src, CompletableFuture<U> snd,
                  BiConsumer<? super T,? super U> fn) {
             super(executor, dep, src, snd); this.fn = fn;
         }
+
+        /**
+         * 按照特定模式来触发  分为 同步触发 异步触发 和 嵌套触发
+         * @param mode SYNC, ASYNC, or NESTED
+         * @return
+         */
         final CompletableFuture<Void> tryFire(int mode) {
             CompletableFuture<Void> d;
             CompletableFuture<T> a;
             CompletableFuture<U> b;
+            // 如果依赖future == null 或者 执行 biAccept 处理2个 source 返回false (这里应该是处理失败的意思)返回null
             if ((d = dep) == null ||
+                    // mode > 0 代表是 异步模式  这时传入null 嵌套模式或者同步模式 都是传入 this
                 !d.biAccept(a = src, b = snd, fn, mode > 0 ? null : this))
                 return null;
+            // 置空代表本对象 isAlive == false
             dep = null; src = null; snd = null; fn = null;
+            // 执行后置函数
             return d.postFire(a, b, mode);
         }
     }
 
+    /**
+     * 将2个 source 对象 执行给定的函数
+     * @param a  source 1
+     * @param b  source 2
+     * @param f  函数对象
+     * @param c
+     * @param <R>
+     * @param <S>
+     * @return
+     */
     final <R,S> boolean biAccept(CompletableFuture<R> a,
                                  CompletableFuture<S> b,
                                  BiConsumer<? super R,? super S> f,
@@ -1702,6 +1917,9 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     /**
      * Returns raw result after waiting, or null if interruptible and
      * interrupted.
+     * 当尝试获取结果时会转发到该方法
+     * get -> waitingGet(true) 代表本任务是可以打断的
+     * join -> waitingGet(false) 代表本任务不可打断
      */
     private Object waitingGet(boolean interruptible) {
         Signaller q = null;
@@ -1890,9 +2108,11 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * @throws ExecutionException if this future completed exceptionally
      * @throws InterruptedException if the current thread was interrupted
      * while waiting
+     * get 方法内部会委托给 reportGet 来对结果进行评估
      */
     public T get() throws InterruptedException, ExecutionException {
         Object r;
+        // 如果返回的是null 尝试阻塞等待 看来在初始化的 时候 result 就会被设置成 NIL 因为 null 有特殊含义  如果结果不为null 直接返回
         return reportGet((r = result) == null ? waitingGet(true) : r);
     }
 

@@ -181,7 +181,7 @@ public class ForkJoinWorkerThread extends Thread {
                     if (exception == null)
                         exception = ex;
                 } finally {
-                    // 注销某个 worker 对象
+                    // 注销某个 worker 对象 因为 worker 已经不使用了就要回收 之前创建的wq 对象
                     pool.deregisterWorker(this, exception);
                 }
             }

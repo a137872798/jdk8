@@ -592,16 +592,17 @@ public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
         for (int c;;) {
             // 代表本 complete 对象 没有等待任务了 就要切换到下个节点
             if ((c = a.pending) == 0) {
-                // 没有元素时触发  第一次 a == s  之后 a是s 的下个节点
+                // 代表该节点的全部任务完成
                 a.onCompletion(s);
-                // 把 s 赋值为a ， a 赋值为 a.completer      .completer 代表链结构的下个元素
+                // 代表已经在 root 的位置了
                 if ((a = (s = a).completer) == null) {
-                    // 如果不存在下个节点了 就 执行 quietlyComplete 代表 全部任务完成???
+                    // 如果不存在下个节点了 就 执行 quietlyComplete
+                    // 就是在 整个任务级别 调用 setComplete(Normal)
                     s.quietlyComplete();
                     return;
                 }
             }
-            // CAS 操作成功 代表 本次 成功减少了 一个对象 否则会进入下次自旋
+            // 代表pending 任务并没有执行完 试图减少一个 pending 后返回
             else if (U.compareAndSwapInt(a, PENDING, c, c - 1))
                 return;
         }
@@ -615,7 +616,7 @@ public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
      * one exists, else marks this task as complete. This method may be
      * useful in cases where {@code onCompletion} should not, or need
      * not, be invoked for each completer in a computation.
-     * 传播完成事件  该方法 与上面相比就是少了 onComplete 的调用
+     * 传播完成事件  该方法 与上面相比就是少了 onComplete 的调用  onComplete 一般是由子类进行重写的
      */
     public final void propagateCompletion() {
         CountedCompleter<?> a = this, s = a;
@@ -649,13 +650,18 @@ public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
      * more simply using {@code quietlyCompleteRoot();}.
      *
      * @param rawResult the raw result
-     *                  设置结果 并提示 完成任务
+     *                  由外部将结果设置进去
      */
     public void complete(T rawResult) {
         CountedCompleter<?> p;
+        // 使用传入的值 作为结果 虽然是 noop
         setRawResult(rawResult);
+        // 触发完成方法
         onCompletion(this);
+        // 只将当前任务的状态设置成完成   在tryComplete 中 通过 .completed 属性 不断往上获取节点 直到 root 然后调用 quietlyComplete 代表root 任务整个完成
+        // 而这里只是将整个链上的某个节点设置成完成
         quietlyComplete();
+        // 尝试调用 上个节点的 tryComplete
         if ((p = completer) != null)
             p.tryComplete();
     }
@@ -667,7 +673,7 @@ public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
      * #nextComplete} in completion traversal loops.
      *
      * @return this task, if pending count was zero, else {@code null}
-     * 返回第一个完成的任务
+     * 返回第一个完成的任务  如果当前任务  pending == 0 直接返回本对象
      */
     public final CountedCompleter<?> firstComplete() {
         for (int c;;) {
@@ -694,13 +700,15 @@ public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
      * }}</pre>
      *
      * @return the completer, or {@code null} if none
+     * 返回下一个完成者
      */
     public final CountedCompleter<?> nextComplete() {
         CountedCompleter<?> p;
+        // 如果上个 节点 悬置任务 （pending == 0） 代表已完成 可以返回
         if ((p = completer) != null)
             return p.firstComplete();
         else {
-            // 没有completer 就代表 全部任务执行完了
+            // 如果没有上个元素 就直接将该节点设置成 NORMAL (如果还有pending 也不管)
             quietlyComplete();
             return null;
         }
@@ -708,7 +716,7 @@ public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
 
     /**
      * Equivalent to {@code getRoot().quietlyComplete()}.
-     *  触发每个节点的 quietlyComplete
+     * 等同于 获取root 节点并执行完成
      */
     public final void quietlyCompleteRoot() {
         for (CountedCompleter<?> a = this, p;;) {
@@ -727,10 +735,13 @@ public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
      *
      * @param maxTasks the maximum number of tasks to process.  If
      *                 less than or equal to zero, then no tasks are
-     *                 processed.  代表最多处理的任务数量
+     *                 processed.
+     *                 maxTasks 代表尝试协助完成的工作数量 <= 0 代表不需要帮助
+     *                 判断尝试帮助完成任务的线程是 外部线程还 FJThread
      */
     public final void helpComplete(int maxTasks) {
         Thread t; ForkJoinWorkerThread wt;
+        // 确保 当前任务还没完成
         if (maxTasks > 0 && status >= 0) {
             // 使用线程池中其他线程协助执行
             if ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread)
@@ -744,10 +755,12 @@ public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
 
     /**
      * Supports ForkJoinTask exception propagation.
+     * 代表 任务执行中出现了异常
      */
     void internalPropagateException(Throwable ex) {
         CountedCompleter<?> a = this, s = a;
-        // 将 异常 传播到 内部 每个节点 依次调用 onExceptionalCompletion
+        // 将 异常 传播到 内部 每个节点 依次调用 recordExceptionalCompletion 记录异常信息
+        // 父类在 出现异常时 只会记录 task 本身的 异常信息
         while (a.onExceptionalCompletion(ex, s) &&
                (a = (s = a).completer) != null && a.status >= 0 &&
                 // 这里代表成功设置了 异常标识
@@ -757,9 +770,11 @@ public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
 
     /**
      * Implements execution conventions for CountedCompleters.
+     * FJTask 执行任务的 实际逻辑
      */
     protected final boolean exec() {
         compute();
+        // 这个代表该任务完成时 整体任务 还没有完成 也就是 FJTask 不能调用setComplete 方法
         return false;
     }
 
