@@ -666,16 +666,16 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
          * be triggerable. Uses FJ tag bit to ensure that only one
          * thread claims ownership.  If async, starts as task -- a
          * later call to tryFire will run action.
-         * 判断该 action 是否可以运行 只有当被触发时才能调用
+         * 同步 或者 嵌套模式下会触发该方法 判断该 action 是否可以运行
          */
         final boolean claim() {
             Executor e = executor;
-            // 将该任务的 低16位设置成1  这个应该就是单纯的防止并发 代表该task 已经有某个 visitor 了
+            // 将该任务的 低16位设置成1  这个应该就是单纯的避免执行多次 代表该task 已经有某个 visitor 了
             if (compareAndSetForkJoinTaskTag((short)0, (short)1)) {
                 // 因为内部没有线程池 无法异步执行 返回true 在外部就会同步执行
                 if (e == null)
                     return true;
-                // 使用线程池执行 返回false
+                // 使用线程池执行 返回false 这样会阻止外部以同步 或者嵌套模式执行
                 executor = null; // disable
                 e.execute(this);
             }
@@ -713,8 +713,10 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
             else
                 a.postComplete();
         }
+        // 针对本对象也会调用 postComplete 方法
         if (result != null && stack != null) {
             if (mode < 0)
+                // 如果是嵌套模式返回本对象 而不是往下 传递结果
                 return this;
             else
                 postComplete();
@@ -881,17 +883,32 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         return d;
     }
 
+    /**
+     * 代表单数据源消费
+     * @param <T>
+     */
     @SuppressWarnings("serial")
     static final class UniWhenComplete<T> extends UniCompletion<T,T> {
+        /**
+         * 消费函数
+         */
         BiConsumer<? super T, ? super Throwable> fn;
         UniWhenComplete(Executor executor, CompletableFuture<T> dep,
                         CompletableFuture<T> src,
                         BiConsumer<? super T, ? super Throwable> fn) {
             super(executor, dep, src); this.fn = fn;
         }
+
+        /**
+         * 代表 该动作被触发时执行的动作
+         * @param mode SYNC, ASYNC, or NESTED
+         * @return
+         */
         final CompletableFuture<T> tryFire(int mode) {
             CompletableFuture<T> d; CompletableFuture<T> a;
+            // dep == null 代表已经执行过一次了 不能重复执行
             if ((d = dep) == null ||
+                    // 异步模式 不传入 本对象(这样能确保 方法正常调用 其余模式要传入是为了确保该对象没有设置线程池)  如果源头结果还是没有 那么还是返回null
                 !d.uniWhenComplete(a = src, fn, mode > 0 ? null : this))
                 return null;
             dep = null; src = null; fn = null;
@@ -899,16 +916,31 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         }
     }
 
+    /**
+     * 以 a 作为数据源头 一旦该数据有result 之后 通过指定函数去消耗它
+     * @param a
+     * @param f
+     * @param c  可能为null 而 c 为null 的情况 就是不打算以异步方式执行 异步方式 一定会包装一个 UniWhenComplete 对象
+     * @return
+     */
     final boolean uniWhenComplete(CompletableFuture<T> a,
                                   BiConsumer<? super T,? super Throwable> f,
                                   UniWhenComplete<T> c) {
         Object r; T t; Throwable x = null;
+        // 如果 源头结果还没有生成 直接返回 之后会将action 封装成对象后设置到 a 上这样在 a 的结果获取到后就触发之前未执行的逻辑
         if (a == null || (r = a.result) == null || f == null)
             return false;
+        // 如果当前结果还没有生成  这时就要设置result
         if (result == null) {
             try {
+                // 当设置动作时的首次调用 c 会为null  在首次调用失败后 才会封装成c 对象 并 在源头获取到结果后触发
+                // 异步模式下 c 也是null 因为能以异步方式执行之后 c.claim() 内部的线程池会被置空 就一定返回false 而异步模式 又是允许执行的 所以直接传入 null 确保 不做这里的判断
+                // 因为如果是异步模式 会使用c 内部维护的线程池重新跑一次 tryFire(ASYNC) 方法 同步或嵌套模式被阻止是因为 c 的执行需要交托给内部的线程池
+                // 该方法只能以异步方式执行一次 之后 线程池 置空后 就会返回true 允许后面的执行
+                // 异步只执行一次的前提是 已经生成结果了 如果没有生成结果 是不会使用线程池执行的
                 if (c != null && !c.claim())
                     return false;
+                // 如果结果为null 或者出现了异常 t 设置为null
                 if (r instanceof AltResult) {
                     x = ((AltResult)r).ex;
                     t = null;
@@ -916,8 +948,11 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
                     @SuppressWarnings("unchecked") T tr = (T) r;
                     t = tr;
                 }
+                // 将 结果和异常信息传入函数
                 f.accept(t, x);
+                // 确保没有异常的情况下
                 if (x == null) {
+                    // 这里将 a 的结果 设置到了 d 里面
                     internalComplete(r);
                     return true;
                 }
@@ -925,20 +960,52 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
                 if (x == null)
                     x = ex;
             }
+            // 设置异常结果
             completeThrowable(x, r);
         }
         return true;
     }
 
+    /**
+     * 针对完成时 的联接函数
+     * @param e 在同步模式下 为null 代表不使用额外的线程池去执行
+     * @param f 消费者函数 处理 生成结果后的 future 对象  BiConsumer 代表消费2个参数 第一个代表是正常生成的 result 对象 第二个是 生成的异常对象
+     * @return
+     */
     private CompletableFuture<T> uniWhenCompleteStage(
         Executor e, BiConsumer<? super T, ? super Throwable> f) {
+        // 非空校验
         if (f == null) throw new NullPointerException();
+
+        // 创建一个下游对象
         CompletableFuture<T> d = new CompletableFuture<T>();
+        // 新建的 对象会将 自身作为上游对象 只有上游对象的result 已经设置的情况下才会唤醒下游
+        // 在设置该方法的 时候 立即检测一次 当前future 的 result 是否已经设置
+
+        // 如果使用异步执行 或者当前结果还没有生成 那么 该消费函数 肯定是在后面的某个时刻才能触发 为了保留这个动作 将动作封装成一个节点后设置到上游对象
+        // 比如 future.whenComplete 这时 就会将 动作封装后设置到 future 上
+        // 这样做的好处是不会阻塞主线程
         if (e != null || !d.uniWhenComplete(this, f, null)) {
+            // 将action 封装起来  这里传入了 线程池 也就是 即使 是同步模式或者嵌套模式 调用 tryFire 也是无法获取结果的 因为 内部会判断 c.claim 是否为true 而有设置线程池的情况 会返回false
+            // 为什么要这样做??? 现在的认知就是 先创建a 之后 设置各种后置函数 ， 这时 a 的结果可能已经生成了 这样结果就会直接进入到 d
+            // 而如果a的生成 是比较耗时的操作 就会将 后面的任务 添加到a 后面 这样a 在完成时 就会自发的将结果设置到 d 中
+            // 而d的后一个action 会添加到 d 中 当d 设置完结果后 又会触发 postComplete 这样继续传递结果
+            // 这里能否顺利的将结果 从a 传递到d 还有一个制约因素 就是 UniWhenComplete 对象 是否设置 线程池属性
+            // 当a result 生成的时候 会以嵌套模式传递结果 这时如果 UniWhenComplete.excute != null 那么不会将结果传递到d 为什么这样设计??? 可能为传递本身增加了一个 触发机制 比如通过某种方式
+            // 一次性将a的结果不断传递下去 就类似响应式的 cold 和 hot 概念一样
             UniWhenComplete<T> c = new UniWhenComplete<T>(e, d, this, f);
+            // 将 c 添加到 当前对象中
+            // 梳理一下 a 对象在调用 whenComplete 后返回一个新的 d 对象 而 a 对象后面追加了一个基于a处理并将结果设置到 d 的节点
             push(c);
+
+            // 这里如果内部设置了线程池 就是使用 异步执行 而且只能异步执行一次 之后会将线程池置空 且之后 无论哪种模式都是同步调用 (因为线程池已经置空了c.claim 始终是false 无论怎么调用都是在当前线程执行)
+            // 这里只是写法比较绕 同步调用就是为了转发给异步调用
             c.tryFire(SYNC);
         }
+
+        // 如果是同步模式 会先尝试直接获取一次结果 如果没有获取到的情况  将这个action的执行时机延后 从而不阻塞主线程， 做法就是生成了一个 将a 的 result 传播到d 的 result 的节点对象
+        // 该节点是设置在 a 上的 然后返回了 d 节点 注意这里  a和d 是没有直接关联的  不过a 的Complete 链上有一个动作 就是当a 的result 已经生成的时候将结果转移到 d 上 这时 d 也就有了结果
+        // 生成a 节点的 任务 在使用 线程池 异步执行后 马上就会触发 下游节点 这样就会执行到设置d result 的 action
         return d;
     }
 
@@ -998,6 +1065,10 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         return d;
     }
 
+    /**
+     * 该对象看来是没有异步执行机制的 应该是因为他是一个终结点的关系吧
+     * @param <T>
+     */
     @SuppressWarnings("serial")
     static final class UniExceptionally<T> extends UniCompletion<T,T> {
         Function<? super Throwable, ? extends T> fn;
@@ -1024,8 +1095,10 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         if (result == null) {
             try {
                 if (r instanceof AltResult && (x = ((AltResult)r).ex) != null) {
+                    // 同样的套路 第一次 c 为null 总能直接调用 之后如果是同步模式这里返回false 内部转发给线程池 再之后一直都是同步调用
                     if (c != null && !c.claim())
                         return false;
+                    // 将异常转换为正常对象后设置到 对应节点中 注意该节点不是 首节点而是 某个中间节点
                     completeValue(f.apply(x));
                 } else
                     internalComplete(r);
@@ -1036,13 +1109,21 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         return true;
     }
 
+    /**
+     * 代表当本节点 完成后 如果产生了异常使用fun 去处理 当前节点 是整个调用链中间的某个点 而不是起始节点
+     * @param f
+     * @return
+     */
     private CompletableFuture<T> uniExceptionallyStage(
         Function<Throwable, ? extends T> f) {
         if (f == null) throw new NullPointerException();
         CompletableFuture<T> d = new CompletableFuture<T>();
+        // 直接判断是否有异常了
         if (!d.uniExceptionally(this, f, null)) {
+            // 封装节点设置到 栈结构中
             UniExceptionally<T> c = new UniExceptionally<T>(d, this, f);
             push(c);
+            // 该方法 不允许异步调用 再次尝试获取结果
             c.tryFire(SYNC);
         }
         return d;
@@ -1231,9 +1312,24 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     }
 
     /** Post-processing after successful BiCompletion tryFire. */
+    /**
+     * 执行后置函数
+     * @param a 第一个数据源
+     * @param b 第二个数据源
+     * @param mode 触发fire 的模式
+     * @return
+     */
     final CompletableFuture<T> postFire(CompletableFuture<?> a,
                                         CompletableFuture<?> b, int mode) {
         if (b != null && b.stack != null) { // clean second source
+            // 代表嵌套模式 或者 还未生成结果 直接清理  注意 要执行的任务 会被分别设置到 a 和 b 的栈顶 这里 应该是 某个任务已经完成了 就需要将该任务从栈结构中剔除
+            // 这样设想 a 或者 b 的其中一个完成 就能结束一个动作  动作会在首次就尝试获取result 这时一般是没有的 那么就选择将任务本身 封装成一个Complete 代表一个动作
+            // 且同时设置到 a b 中 (b的是被包装过的代理对象 为什么不直接引用一个对象???)  当某个地方 (现在还不知道) 作为触发点 代表生成了result 然后不断向下传播并触发动作
+            // 就会触发到 a 节点 或者b 节点 这时调用之前封装的 动作 这里有几种情况 一种是 动作本身 只要求一个future 有结果 比如 orXXX 那么 另一个对象他的栈上就需要将无效的动作
+            // 清理掉 比如之前设置进去的 orXXX 动作 而如果 b 是有结果的那个 这里就触发 complete 的后置函数
+            // 如果是 andXXX 函数 那么 一般来讲 a b 都是有结果 都会触发 postComplete
+            // 在 postComplete 中 传递下去所有的任务都会以嵌套模式执行  SYNC 或者ASYNC 模式下触发的 tryFire 在有结果的情况下 以自身作为root 不断向下传播 触发 tryFire
+            // 而使用嵌套模式是为了避免子节点 同时不断向下传播 也就是避免多次传播
             if (mode < 0 || b.result == null)
                 b.cleanStack();
             else
@@ -1507,6 +1603,13 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     }
 
     /** Recursively constructs a tree of completions. */
+    /**
+     * 构建一颗 满足 and 条件的树
+     * @param cfs
+     * @param lo
+     * @param hi
+     * @return
+     */
     static CompletableFuture<Void> andTree(CompletableFuture<?>[] cfs,
                                            int lo, int hi) {
         CompletableFuture<Void> d = new CompletableFuture<Void>();
@@ -1515,11 +1618,28 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         else {
             CompletableFuture<?> a, b;
             int mid = (lo + hi) >>> 1;
+            // 每次 递归 lo 和 hi 都接近最前面的 2个元素
+            // 极端情况  lo == mid 等于最左边的节点 等于 hi 都是 0
             if ((a = (lo == mid ? cfs[lo] :
                       andTree(cfs, lo, mid))) == null ||
                 (b = (lo == hi ? a : (hi == mid+1) ? cfs[hi] :
                       andTree(cfs, mid+1, hi)))  == null)
                 throw new NullPointerException();
+            // 本次 a 或者 b 结果还没有生成
+            // 之后的递归 会将 前面 返回的 d 对象作为 source
+            // 当最初的 a 或者 b
+            // 这里ab 可能是一个对象 为 a 设置 传播数据的对象  将新对象(d)返回 之后 d 又会作为其他节点的 a 对象
+            // 从第一个开始 第一次 将最左节点包装成 d1 之后将 第二个节点包装成d2 之后将 d1d2 包装成d3 之后 第三个节点变成 d4 第4个节点变成d5 再将 d4 d5  变化d6 最后 d3 d6 合并成d 7 并返回
+            //             d7
+            //            /\
+            //         d3   d6
+            //        / \  / \
+            //      d1  d2 d3 d4
+            //     [0][1]  [2]  [3]
+            //
+            // 这样无论下游哪个数据填充完成 都可以通过 触发 c （b 上挂了c 的代理对象 起到一样的效果） 比如 d1 借由a 的数据填充完毕而触发 之后 唤醒了 d3 (因为d1 相当于是d3 的a)
+            // 由于d7 相当于 需要获取到 数组中全部数据 只要有一个 没有设置 biRelay 就会返回false 比如 d1 d2 都完成 会触发d3 的方法 d3 会尝试将数据填充到 d7 这时 d7 需要确保d6的数据已经设置
+            // 就会不满足条件
             if (!d.biRelay(a, b)) {
                 BiRelay<?,?> c = new BiRelay<>(d, a, b);
                 a.bipush(b, c);
@@ -1534,8 +1654,11 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
     /** Pushes completion to this and b unless either done. */
     final void orpush(CompletableFuture<?> b, BiCompletion<?,?,?> c) {
         if (c != null) {
+            // 当前还没有设置结果的 时候 才有设置的必要
             while ((b == null || b.result == null) && result == null) {
+                // 将c 设置到 本对象 也就是a 的栈顶
                 if (tryPushStack(c)) {
+                    // 存在b 的情况 将 c 包装后设置到b 中
                     if (b != null && b != this && b.result == null) {
                         Completion q = new CoCompletion(c);
                         while (result == null && b.result == null &&
@@ -1735,16 +1858,23 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         return d;
     }
 
+    /**
+     * 剩余 2个 数据源 以及一个 要设置结果的 目标对象  默认就是不使用线程池的  那么 什么样的任务需要设置线程池 ???
+     * @param <T>
+     * @param <U>
+     */
     @SuppressWarnings("serial")
     static final class OrRelay<T,U> extends BiCompletion<T,U,Object> { // for Or
         OrRelay(CompletableFuture<Object> dep, CompletableFuture<T> src,
                 CompletableFuture<U> snd) {
             super(null, dep, src, snd);
         }
+        // 根据模式触发动作
         final CompletableFuture<Object> tryFire(int mode) {
             CompletableFuture<Object> d;
             CompletableFuture<T> a;
             CompletableFuture<U> b;
+            // 如果本来就没有 依赖该数据的对象直接返回null  或者 本次尝试获取结果失败 返回null
             if ((d = dep) == null || !d.orRelay(a = src, b = snd))
                 return null;
             src = null; snd = null; dep = null;
@@ -1752,31 +1882,57 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         }
     }
 
+    /**
+     * 使用指定函数触发
+     * @param a
+     * @param b
+     * @return
+     */
     final boolean orRelay(CompletableFuture<?> a, CompletableFuture<?> b) {
         Object r;
+        // 节点还没有结果 直接返回
         if (a == null || b == null ||
             ((r = a.result) == null && (r = b.result) == null))
             return false;
+        // 如果本结果还没生成 将 a 或者 b 的结果设置到 result 中
         if (result == null)
             completeRelay(r);
+
+        // 只要 a 或者 b 存在结果了 这里就会返回true
         return true;
     }
 
     /** Recursively constructs a tree of completions. */
+    /**
+     * 递归构建树结构
+     * @param cfs 代表一组待处理的 future 对象
+     * @param lo 起点
+     * @param hi 数组长度终点
+     * @return
+     */
     static CompletableFuture<Object> orTree(CompletableFuture<?>[] cfs,
                                             int lo, int hi) {
         CompletableFuture<Object> d = new CompletableFuture<Object>();
+        // 确保 起点 <= 终点
         if (lo <= hi) {
             CompletableFuture<?> a, b;
+            // 二分法 递归
             int mid = (lo + hi) >>> 1;
+            // 如果已经到起点的位置 将值赋予 a  否则将 就是将a 赋值为 递归调用的结果 如果a == null 或者 b == null (b 代表后半部分)
             if ((a = (lo == mid ? cfs[lo] :
                       orTree(cfs, lo, mid))) == null ||
                 (b = (lo == hi ? a : (hi == mid+1) ? cfs[hi] :
                       orTree(cfs, mid+1, hi)))  == null)
                 throw new NullPointerException();
+
+            // 如果本次 数据还没有结果 就只能 生成对象并 设置到栈顶中 等待结果
+            // 注意 这里是调用 d 的 方法 而不是当前对象的 方法 这种套路就是每次都会创建中间对象 而d 的结果一般都是未设置的 也就是等待 a 或者b 的结果有了后 设置到 d 中
             if (!d.orRelay(a, b)) {
+                // 该对象 封装了 执行的逻辑 也就是 有结果了就设置 否则 返回null 而执行的时机 却是由上游来决定的
                 OrRelay<?,?> c = new OrRelay<>(d, a, b);
+                // c 设置到 a 的栈顶 c 的包装对象 设置到 b的栈顶  这样只要a 或者b 的结果生成了 都可以触发对应的动作
                 a.orpush(b, c);
+                // 这里应该是做检测 如果result 还没 不在意返回值 如果 生成了结果 会调用 postFire
                 c.tryFire(SYNC);
             }
         }
@@ -1799,28 +1955,44 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
 
         public void run() {
             CompletableFuture<T> d; Supplier<T> f;
+            // 确保下游存在
             if ((d = dep) != null && (f = fn) != null) {
                 dep = null; fn = null;
+                // 只有当结果没有设置的时候才能调用 如果是不包含返回值的 方法在调用一次后 会设置成NIL 也就是还是不能多次调用
                 if (d.result == null) {
                     try {
+                        // 从f获取结果
                         d.completeValue(f.get());
                     } catch (Throwable ex) {
                         d.completeThrowable(ex);
                     }
                 }
+                // 触发下游的 函数 也就是Complete.tryFire
                 d.postComplete();
             }
         }
     }
 
+    /**
+     * 通过  supplier 来初始化 内部的result 可以通过组合其他函数 来实现 响应式  因为该对象在完成时 会触发下游所有的节点
+     * @param e
+     * @param f
+     * @param <U>
+     * @return
+     */
     static <U> CompletableFuture<U> asyncSupplyStage(Executor e,
                                                      Supplier<U> f) {
         if (f == null) throw new NullPointerException();
+        // 新建一个对象作为 接受 f 结果的下游
         CompletableFuture<U> d = new CompletableFuture<U>();
+        // 使用线程池执行任务
         e.execute(new AsyncSupply<U>(d, f));
         return d;
     }
 
+    /**
+     * 异步任务对象 内部有一个用于输出结果的引用  dep  以及一个行为对象 runnable
+     */
     @SuppressWarnings("serial")
     static final class AsyncRun extends ForkJoinTask<Void>
             implements Runnable, AsynchronousCompletionTask {
@@ -1831,28 +2003,51 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
 
         public final Void getRawResult() { return null; }
         public final void setRawResult(Void v) {}
+
+        /**
+         * 执行逻辑并始终返回true
+         * @return
+         */
         public final boolean exec() { run(); return true; }
 
         public void run() {
             CompletableFuture<Void> d; Runnable f;
+            /**
+             * 这里首先要确保存在下游元素 这样执行 run 才有意义 因为对外展示的 就是这个下游元素
+             */
             if ((d = dep) != null && (f = fn) != null) {
                 dep = null; fn = null;
+                // 当下游元素不存在时
                 if (d.result == null) {
                     try {
+                        // 执行任务
                         f.run();
+                        // run 没有返回值 这里设置成null 难怪需要 NIL 对象 为了分辨出 null 到底是 未设置 还是 本次执行结果就是null
                         d.completeNull();
                     } catch (Throwable ex) {
+                        // 如果出现异常了 将result 设置成异常信息
                         d.completeThrowable(ex);
                     }
                 }
+                // 代表任务完成了 将 d 内部的全部 complete 全部执行
+                // 因为可能会设置一个 链式调用 (后面有一堆响应函数) 本任务完成后就代表可以开始执行函数的内容了
+                // 这里是嵌套执行 因为该方法内部本来就会传播调用所以不需要再进行 执行子任务的时候继续传播了 (tryFire 同步异步模式都会进行传播)
                 d.postComplete();
             }
         }
     }
 
+    /**
+     * 将 线程池 和 动作对象包装成 future 对象
+     * @param e
+     * @param f
+     * @return
+     */
     static CompletableFuture<Void> asyncRunStage(Executor e, Runnable f) {
         if (f == null) throw new NullPointerException();
         CompletableFuture<Void> d = new CompletableFuture<Void>();
+        // 使用线程池执行被封装的异步任务  使得 d 作为 f 行为的dep 对象
+        // 这里 一旦 d 本身设置了 结果就可以直接get 了 但是 d 的下游也许还有任务这样还会继续传播
         e.execute(new AsyncRun(d, f));
         return d;
     }
@@ -1926,7 +2121,10 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         boolean queued = false;
         int spins = -1;
         Object r;
+        // 如果 result 是 NIL 是不会进入阻塞的 也就是 会返回 包装对象
         while ((r = result) == null) {
+
+            // 会先尝试一定次数的自旋
             if (spins < 0)
                 spins = (Runtime.getRuntime().availableProcessors() > 1) ?
                     1 << 8 : 0; // Use brief spin-wait on multiprocessors
@@ -1937,29 +2135,39 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
             else if (q == null)
                 q = new Signaller(interruptible, 0L, 0L);
             else if (!queued)
+                // 这里将 信号入栈了 而当本对象 在 fjPool 中完成了任务后
                 queued = tryPushStack(q);
             else if (interruptible && q.interruptControl < 0) {
+                // 代表是在阻塞状态下被唤醒的 这样调用cleanStack 会将自身 从 stack 结构中移除  也就是本身是打算获取结果的 所以阻塞线程 被唤醒的时候
+                // 只能将本次任务置空
                 q.thread = null;
                 cleanStack();
                 return null;
             }
             else if (q.thread != null && result == null) {
                 try {
+                    // 阻塞本线程  上游完成任务时 会通过递归的方式 触发所有的 tryFire 针对该信号对象就是 唤醒线程
                     ForkJoinPool.managedBlock(q);
                 } catch (InterruptedException ie) {
                     q.interruptControl = -1;
                 }
             }
         }
+        // 这里代表获取到了结果 无论是 按照一定自旋次数后获取到的 还是 通过tryFire 唤醒信号器之后获取到的
         if (q != null) {
+            // 如果是通过唤醒信号器 那么将线程置空
             q.thread = null;
             if (q.interruptControl < 0) {
+                // 会进入这里吗 不过逻辑和上面是一样的 就是被打断返回null
+                // 刚好设置完结果之后被打断了???
                 if (interruptible)
                     r = null; // report interruption
                 else
+                    // 不允许打断的情况 下 会调用打断方法
                     Thread.currentThread().interrupt();
             }
         }
+        // 这里会唤醒内层的任务 因为本对象之后的各种 操作都被封装成 节点设置到 栈结构中 这里触发后 会将栈内 之前暂存的动作触发
         postComplete();
         return r;
     }
@@ -2028,6 +2236,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * to complete the returned CompletableFuture
      * @param <U> the function's return type
      * @return the new CompletableFuture
+     * supplyAsync 是用来初始化本 future 结果的
      */
     public static <U> CompletableFuture<U> supplyAsync(Supplier<U> supplier) {
         return asyncSupplyStage(asyncPool, supplier);
@@ -2057,6 +2266,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * @param runnable the action to run before completing the
      * returned CompletableFuture
      * @return the new CompletableFuture
+     * 通过传入一个 runnable 并使用线程池 执行任务
      */
     public static CompletableFuture<Void> runAsync(Runnable runnable) {
         return asyncRunStage(asyncPool, runnable);
@@ -2071,6 +2281,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * returned CompletableFuture
      * @param executor the executor to use for asynchronous execution
      * @return the new CompletableFuture
+     * 使用 外部传入的线程池执行 如果不允许使用 fjPool 而传入的又是 FJPool 就替换成一个 简单的线程池
      */
     public static CompletableFuture<Void> runAsync(Runnable runnable,
                                                    Executor executor) {
@@ -2084,6 +2295,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * @param value the value
      * @param <U> the type of the value
      * @return the completed CompletableFuture
+     * 使用静态方法创建一个 已经设置了结果的 CompletableFuture 对象
      */
     public static <U> CompletableFuture<U> completedFuture(U value) {
         return new CompletableFuture<U>((value == null) ? NIL : value);
@@ -2112,7 +2324,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      */
     public T get() throws InterruptedException, ExecutionException {
         Object r;
-        // 如果返回的是null 尝试阻塞等待 看来在初始化的 时候 result 就会被设置成 NIL 因为 null 有特殊含义  如果结果不为null 直接返回
+        // 如果 result == null 才会等待 否则 处理 结果 针对没有返回值的方法 会将 result 设置成NIL 然后 在 reportGet 中又会还原成 null
         return reportGet((r = result) == null ? waitingGet(true) : r);
     }
 
@@ -2356,21 +2568,48 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         return uniComposeStage(screenExecutor(executor), fn);
     }
 
+    /**
+     * 当该future 执行结束后 调用 action 处理结果 这里分为2种情况  同步/异步
+     * 如果是异步情况 会将fun， source 封装成一个 包含线程池的 aciton 对象并添加到 source 的尾部
+     * 这时 尝试以同步方式 或者嵌套方式触发 tryFire 都会被阻止 并且会触发异步执行 (这时如果异步执行 a 的结果还没有生成呢???)
+     * 如果以同步方式执行 会先判断当前result 是否完成 之后为了不阻塞当前线程也会将任务 封装后设置到 a 后面  之后将下游对象 d 返回
+     * @param action the action to perform
+     * @return
+     */
     public CompletableFuture<T> whenComplete(
+            // 这里传入了 下游的动作
         BiConsumer<? super T, ? super Throwable> action) {
         return uniWhenCompleteStage(null, action);
     }
 
+    /**
+     * 以异步模式执行 也就是将节点设置到 a 后的首次判断是否线程池执行 之后还是会以同步方式执行
+     * @param action the action to perform
+     * @return
+     */
     public CompletableFuture<T> whenCompleteAsync(
         BiConsumer<? super T, ? super Throwable> action) {
         return uniWhenCompleteStage(asyncPool, action);
     }
 
+    /**
+     * 从外部指定线程池
+     * @param action the action to perform
+     * @param executor the executor to use for asynchronous execution
+     * @return
+     */
     public CompletableFuture<T> whenCompleteAsync(
         BiConsumer<? super T, ? super Throwable> action, Executor executor) {
         return uniWhenCompleteStage(screenExecutor(executor), action);
     }
 
+    /**
+     * 使用handle 封装 也就是将 result 或者 exception 转换成 另一个对象
+     * @param fn the function to use to compute the value of the
+     * returned CompletionStage
+     * @param <U>
+     * @return
+     */
     public <U> CompletableFuture<U> handle(
         BiFunction<? super T, Throwable, ? extends U> fn) {
         return uniHandleStage(null, fn);
@@ -2411,6 +2650,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * returned CompletableFuture if this CompletableFuture completed
      * exceptionally
      * @return the new CompletableFuture
+     * 追加 专门处理异常的 handler
      */
     public CompletableFuture<T> exceptionally(
         Function<Throwable, ? extends T> fn) {
@@ -2460,6 +2700,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * one completes
      * @throws NullPointerException if the array or any of its elements are
      * {@code null}
+     * 在本对象以及传入的一组对象中 只要满足一个生成了结果就返回
      */
     public static CompletableFuture<Object> anyOf(CompletableFuture<?>... cfs) {
         return orTree(cfs, 0, cfs.length - 1);

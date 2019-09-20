@@ -853,7 +853,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
         if ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread)
             ((ForkJoinWorkerThread) t).workQueue.push(this);
         else
-            // 从外部将任务设置进去 默认情况就是将任务 按照某种hash存入到一个 workQueue中
+            // 从外部将任务设置进去 默认情况就是将任务 按照某种hash存入到一个 workQueue中 只会存入到 偶数队列
             ForkJoinPool.common.externalPush(this);
         return this;
     }
