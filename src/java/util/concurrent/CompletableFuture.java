@@ -563,6 +563,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
      * 尝试触发所有可达的依赖
      * 该方法会从当前栈顶 开始 执行 tryfire 方法并将所有经过的CompletableFuture 对象的 任务全部转移到当前对象的栈顶
      * 全部转移完后 又会回到this 并按照从栈顶往下的顺序 执行 tryFire 相当于一个 拓扑算法
+     * 该调用链就是从 root 源开始 不断往下 执行所有的钩子 (就是将数据转换到 dep 上)
      */
     final void postComplete() {
         /*
@@ -573,10 +574,11 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         CompletableFuture<?> f = this; Completion h;
         // 确保 当前存在栈顶任务 （该f 可能是原对象 也可能是 执行fire 后返回的结果对象）
         while ((h = f.stack) != null ||
-                // 这里 f 已经不是 原对象了 如果 这时将 f 重新指向栈顶 且还有元素
+                // 这里 f 已经不是 原对象了 如果 这时将 f 重新指向栈顶 且还有元素 (一般来说任务应该已经被清除掉了)
                (f != this && (h = (f = this).stack) != null)) {
             CompletableFuture<?> d; Completion t;
-            // 获取栈顶的下个任务 用该任务来替换栈顶
+            // 获取栈顶的下个任务 用该任务来替换栈顶  一般情况下每个function 都会创建一个对应的动作 设置到 source 上 这时就在栈的顶端
+            // 当调用get() 时 生成的节点会在 正常函数的 顶部 这里取出 正常函数 并执行
             if (f.casStack(h, t = h.next)) {
                 // 如果存在 原栈顶的下个元素
                 if (t != null) {
@@ -588,9 +590,13 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
                     // 将原栈顶 与next 节点关联置空
                     h.next = null;    // detach
                 }
-                // 以嵌套模式 触发栈顶任务 并返回结果 如果结果为null  f 还是自身  否则 f 修改成 原栈顶触发后的结果对象 并将结果对象中的元素 全部转移到 this 中
-                // 注意从其他future 中转移过来的任务 会按倒序执行
-                // 最终在其他 路线上的任务都会被转移到 this 中 并在next 存在的情况下 不断调用 tryFire(NESTED)
+                // 首先先看下面  代表 栈顶下没有其他任务  这时触发栈顶的任务 注意是嵌套模式
+                // 如果当前是 a 为 d1 赋值后会将d1 弹出 这样就可以继续执行d1 的action 并为d2 赋值
+                // 代表着 如果是嵌套模式 将 有最初的源头来 执行action
+                // 返回null 时 代表 该d 节点 没有下游对象了 这样就不满足上面 f != this 的条件 就退出循环
+                // 还有种可能就是下游是 异步执行的 那么 这里也会返回null 而异步节点执行完之后 会自己执行一个 postComplete 保证能继续传播
+                // 如果是 get 的话 使用信号阻塞后 tryFire 也会返回null 但是一般 栈还会有action 这样就可以继续执行
+                // 也就是get 只是阻塞到 a 设置结果 而没有阻塞到其他action 的结果都设置完毕
                 f = (d = h.tryFire(NESTED)) == null ? this : d;
             }
         }
@@ -711,16 +717,24 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
             if (mode < 0 || a.result == null)
                 a.cleanStack();
             else
+                // 异步 或者同步 都能保证继续传播下去 比如使用最初的源点使用嵌套模式往下执行 发现是个异步节点 那里会直接断掉 而这里就会继续执行
+                // 这里没有直接掉 clean 是为了能进入 stack!=null 的判断 进而进入下一个tryFire方法  不过异步情况下还是没什么
+                // 作用 因为 d 已经被清除了 会直接返回null
+                // 同步模式情况就是 直接传递数据到下游 这里逻辑跟异步是一样的
                 a.postComplete();
         }
-        // 针对本对象也会调用 postComplete 方法
+        // 该对象是d
         if (result != null && stack != null) {
             if (mode < 0)
-                // 如果是嵌套模式返回本对象 而不是往下 传递结果
+                // 如果是嵌套模式返回本对象 而不是往下 传递结果 这样该对象 会转移到栈中继续执行
+                // 那么就能实现 从 a(source) -> 通过调用action -> 为d1赋值 -> 将该action 从栈中移除 -> 返回d1并移动到a 的栈中
+                // 这样 直接从a 的栈就可以继续 调用 d1 的action 为 d2 赋值了不断重复下去
                 return this;
             else
+                // 异步或者同步模式会继续传递 就能保证数据从上游一直传到下游
                 postComplete();
         }
+        // 返回null 代表该 d 对象 没有下游节点了 也就是没有为下面的 dx 设置 值的action
         return null;
     }
 
@@ -999,7 +1013,9 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
             push(c);
 
             // 这里如果内部设置了线程池 就是使用 异步执行 而且只能异步执行一次 之后会将线程池置空 且之后 无论哪种模式都是同步调用 (因为线程池已经置空了c.claim 始终是false 无论怎么调用都是在当前线程执行)
-            // 这里只是写法比较绕 同步调用就是为了转发给异步调用
+            // 这里使用同步模式 如果条件允许的话 现在就会直接传递数据到下游 否则通过嵌套模式传递
+            // 如果 同步模式 不具备传递功能的话 而这里又获取了结果 那么嵌套模式执行的时候 会发现 d 已经被清除就没办法传递了
+            // 所以 同步模式必须具备 自主的 传递功能
             c.tryFire(SYNC);
         }
 
@@ -1313,7 +1329,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
 
     /** Post-processing after successful BiCompletion tryFire. */
     /**
-     * 执行后置函数
+     * 执行后置函数   这里要注意传入的模式
      * @param a 第一个数据源
      * @param b 第二个数据源
      * @param mode 触发fire 的模式
@@ -1328,11 +1344,15 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
             // 就会触发到 a 节点 或者b 节点 这时调用之前封装的 动作 这里有几种情况 一种是 动作本身 只要求一个future 有结果 比如 orXXX 那么 另一个对象他的栈上就需要将无效的动作
             // 清理掉 比如之前设置进去的 orXXX 动作 而如果 b 是有结果的那个 这里就触发 complete 的后置函数
             // 如果是 andXXX 函数 那么 一般来讲 a b 都是有结果 都会触发 postComplete
-            // 在 postComplete 中 传递下去所有的任务都会以嵌套模式执行  SYNC 或者ASYNC 模式下触发的 tryFire 在有结果的情况下 以自身作为root 不断向下传播 触发 tryFire
-            // 而使用嵌套模式是为了避免子节点 同时不断向下传播 也就是避免多次传播
+            // 在 postComplete 中 传递下去所有的任务都会以嵌套模式执行
+            // 首先假设该节点是 d 并且以a 作为 source 触发了 那么 b 的整条分支都不会执行 这时就要清除b上的所有任务
+            // 当使用嵌套模式时 这里会将 当前设置在 自身上的action 给移除掉(已经触发了 d 的值就是通过该动作执行的)
+            // 而 result 则是 该任务不需要执行了
             if (mode < 0 || b.result == null)
                 b.cleanStack();
             else
+                // 该节点首先是d 然后 比方 基于 b 来触发了 注意是同步模式下  会不断向下传播 而如果b是最初的源点
+                // b 在设置结果后 将所有可达future 的 所有stack 任务全部执行 那么嵌套模式就可以理解为 不想传播
                 b.postComplete();
         }
         return postFire(a, mode);
@@ -2135,7 +2155,8 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
             else if (q == null)
                 q = new Signaller(interruptible, 0L, 0L);
             else if (!queued)
-                // 这里将 信号入栈了 而当本对象 在 fjPool 中完成了任务后
+                // 这里将 信号入栈了 而当本对象 在 fjPool 中完成了任务后 get 相当于 就是给首节点设置栈多设置一个节点
+                // 比如 a 设置了 关于d 的action 之后又设置 本信号对象  信号对象就会在 栈的更上面
                 queued = tryPushStack(q);
             else if (interruptible && q.interruptControl < 0) {
                 // 代表是在阻塞状态下被唤醒的 这样调用cleanStack 会将自身 从 stack 结构中移除  也就是本身是打算获取结果的 所以阻塞线程 被唤醒的时候

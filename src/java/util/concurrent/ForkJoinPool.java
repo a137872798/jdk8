@@ -4044,11 +4044,13 @@ public class ForkJoinPool extends AbstractExecutorService {
      *
      * @param blocker the blocker task
      * @throws InterruptedException if {@code blocker.block()} did so
+     * 使用传入的管理对象来打断线程
      */
     public static void managedBlock(ManagedBlocker blocker)
             throws InterruptedException {
         ForkJoinPool p;
         ForkJoinWorkerThread wt;
+        // 获取调用该方法的线程
         Thread t = Thread.currentThread();
         if ((t instanceof ForkJoinWorkerThread) &&
                 (p = (wt = (ForkJoinWorkerThread) t).pool) != null) {
@@ -4067,6 +4069,7 @@ public class ForkJoinPool extends AbstractExecutorService {
             }
         } else {
             do {
+                // !blocker.isReleasable() 默认就是false 之后block 就会阻塞线程
             } while (!blocker.isReleasable() &&
                     !blocker.block());
         }
