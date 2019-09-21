@@ -161,6 +161,7 @@ package java.util.concurrent;
  *
  * @since 1.7
  * @author Doug Lea
+ * 代表不包含返回值的 forkJoin 子任务
  */
 public abstract class RecursiveAction extends ForkJoinTask<Void> {
     private static final long serialVersionUID = 5232453952276485070L;

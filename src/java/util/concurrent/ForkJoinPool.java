@@ -2208,7 +2208,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                             (a = q.array) != null) {      // non-empty
                         // 找到底部元素的偏移量  看来从其他队列拉取就是拉取底部任务  因为拉取 顶部更容易发生竞争
                         long i = (((a.length - 1) & b) << ASHIFT) + ABASE;
-                        // 获取 base 对象
+                        // 获取 base 对象 （一开始 base 和 top 指向同一个对象 也就是拉取base 会获取到 从外部线程传入的首个任务）
                         if ((t = ((ForkJoinTask<?>)
                                 U.getObjectVolatile(a, i))) != null &&
                                 q.base == b) {

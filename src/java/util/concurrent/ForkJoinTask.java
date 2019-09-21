@@ -438,6 +438,13 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      *
      * @return status upon completion
      * 处理将任务整合的逻辑
+     *
+     *
+     *                                                                                                      r2
+     *                                                * 小2      r2(代表r2的结果生成了)    r2               r1
+     *                                  * 中2         * 小1         * 小1                  r1                 * 小4
+     *                     * 大2        * 中1         * 中1         * 中1                       * 中1         * 小3
+     * 总任务 source ->    * 大1   ->   * 大1   ->    * 大1   ->    * 大1                ->     * 大1     ->  * 大1  -> ...
      */
     private int doJoin() {
         int s;
@@ -846,6 +853,14 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      *
      * @return {@code this}, to simplify usage
      * 该方法 一般是在 exec() 方法中调用的 可能会被 FJThread 执行 也可能会被 外部线程执行
+     * 针对 FJThread 内部线程处理的 任务 就是将任务 不断以二分法的形式
+     *
+     *
+     *                                                                                                      r2
+     *                                                * 小2      r2(代表r2的结果生成了)    r2               r1
+     *                                  * 中2         * 小1         * 小1                  r1                 * 小4
+     *                     * 大2        * 中1         * 中1         * 中1                       * 中1         * 小3
+     * 总任务 source ->    * 大1   ->   * 大1   ->    * 大1   ->    * 大1                ->     * 大1     ->  * 大1  -> ...
      */
     public final ForkJoinTask<V> fork() {
         Thread t;
