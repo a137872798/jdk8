@@ -82,7 +82,7 @@ import java.util.concurrent.ForkJoinPool;
  *        result type
  * @param <K> Type of parent, child and sibling tasks
  * @since 1.8
- * Stream 中使用的task 是 基于 ForkJoin的
+ * Stream 中使用的task 是 基于 ForkJoinTask  的  CC 对象  该对象 执行doExec 总是返回 false
  */
 @SuppressWarnings("serial")
 abstract class AbstractTask<P_IN, P_OUT, R,
@@ -94,8 +94,6 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      * To allow load balancing, we over-partition, currently to approximately
      * four tasks per processor, which enables others to help out
      * if leaf tasks are uneven or some processors are otherwise busy.
-     * ForkJoinPool.getCommonPoolParallelism() 一般情况下为 Runtime.getRuntime().availableProcessors() - 1
-     * 代表一个节点下最多多少leaf ???
      */
     static final int LEAF_TARGET = ForkJoinPool.getCommonPoolParallelism() << 2;
 
@@ -150,7 +148,7 @@ abstract class AbstractTask<P_IN, P_OUT, R,
      */
     protected AbstractTask(PipelineHelper<P_OUT> helper,
                            Spliterator<P_IN> spliterator) {
-        // () 内的数据代表关联的下个节点 可以将 task 也看成链表结构 如果每个 completer 都是 一个新的task
+        // 代表初始化该对象时
         super(null);
         this.helper = helper;
         this.spliterator = spliterator;

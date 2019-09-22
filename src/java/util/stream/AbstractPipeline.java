@@ -69,7 +69,8 @@ import java.util.function.Supplier;
  * @param <S> type of the subclass implementing {@code BaseStream}
  * @since 1.8
  * 管道的骨架类
- * pipeline 应该是 组成一个 链式结构
+ * PipelineHelper 只是一个定义了 很多方法的接口
+ * 每个 Pipeline 实际上更像一个节点 定义了  该步骤的操作逻辑
  */
 abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
         extends PipelineHelper<E_OUT> implements BaseStream<E_OUT, S> {
@@ -79,7 +80,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
     /**
      * Backlink to the head of the pipeline chain (self if this is the source
      * stage).
-     * 代表源头 也就是最上层的 pipeline
+     * 代表源头 也就是最上层的 pipeline  它连接在 Head 的后面
      */
     @SuppressWarnings("rawtypes")
     private final AbstractPipeline sourceStage;
@@ -94,7 +95,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
     /**
      * The operation flags for the intermediate operation represented by this
      * pipeline object.
-     * 代表 source 的 flag 信息
+     * 代表本节点的 动作特性 比如是否是有状态 节点
      */
     protected final int sourceOrOpFlags;
 
@@ -118,7 +119,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
      * The combined source and operation flags for the source and all operations
      * up to and including the operation represented by this pipeline object.
      * Valid at the point of pipeline preparation for evaluation.
-     * 组合 source 的 flag 信息
+     * 推测是从 source 开始 不断向下 并将 flag 整合起来
      */
     private int combinedFlags;
 
@@ -148,7 +149,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
     /**
      * True if there are any stateful ops in the pipeline; only valid for the
      * source stage.
-     * 如果管道中有任何 一个 stateful 的 对象 返回true  只针对 source 起作用
+     * 如果 任何一个 环节是有状态的返回true  什么是有状态的操作???
      */
     private boolean sourceAnyStateful;
 
@@ -160,7 +161,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
     /**
      * True if pipeline is parallel, otherwise the pipeline is sequential; only
      * valid for the source stage.
-     * 是否并行 只能在 source起作用
+     * 判断该流是否并行
      */
     private boolean parallel;
 
@@ -171,17 +172,22 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
      * @param sourceFlags The source flags for the stream source, described in
      * {@link StreamOpFlag}
      * @param parallel True if the pipeline is parallel
-     *                 当该对象被首次创建时  默认就是 sourceStage
+     *                 初始化 管道对象
      */
     AbstractPipeline(Supplier<? extends Spliterator<?>> source,
                      int sourceFlags, boolean parallel) {
+        // 默认 没有前个节点
         this.previousStage = null;
+        // 使用传入的函数对象生成数据源
         this.sourceSupplier = source;
+        // 将本对象 作为源头
         this.sourceStage = this;
+        // 传入 对应的 数据源特性 并生成flag
         this.sourceOrOpFlags = sourceFlags & StreamOpFlag.STREAM_MASK;
         // The following is an optimization of:
         // StreamOpFlag.combineOpFlags(sourceOrOpFlags, StreamOpFlag.INITIAL_OPS_VALUE);
         this.combinedFlags = (~(sourceOrOpFlags << 1)) & StreamOpFlag.INITIAL_OPS_VALUE;
+        // 默认深度为0
         this.depth = 0;
         this.parallel = parallel;
     }
@@ -193,7 +199,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
      * @param sourceFlags the source flags for the stream source, described in
      * {@link StreamOpFlag}
      * @param parallel {@code true} if the pipeline is parallel
-     *                             这里使用迭代器进行初始化
+     *                             这里使用迭代器进行初始化   (可拆分迭代器)
      */
     AbstractPipeline(Spliterator<?> source,
                      int sourceFlags, boolean parallel) {
@@ -219,15 +225,17 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
      */
     AbstractPipeline(AbstractPipeline<?, E_IN, ?> previousStage, int opFlags) {
         // 如果 前一个 pipeline 已经 连接完毕（禁止连接新节点） 或者已经被消费了 就 抛出异常
+        // 消费 应该就是 计算出结果 了 而 连接 则代表 一个环节不能连接多个动作 不同于 CompletableFuture 这个对象 在一个对象上可以关联多个动作
         if (previousStage.linkedOrConsumed)
             throw new IllegalStateException(MSG_STREAM_LINKED);
 
-        // 将上个元素设置为已连接  不是volatile 修饰???
+        // 将上个元素设置为已连接
         previousStage.linkedOrConsumed = true;
-        // 设置下个元素
+        // 将上个节点指向自己
         previousStage.nextStage = this;
 
         this.previousStage = previousStage;
+        // OP 代表 该节点是作为一个 动作 而不是源头
         this.sourceOrOpFlags = opFlags & StreamOpFlag.OP_MASK;
         this.combinedFlags = StreamOpFlag.combineOpFlags(opFlags, previousStage.combinedFlags);
         // 通过这种方式来传入 source 指针
@@ -257,9 +265,11 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
             throw new IllegalStateException(MSG_STREAM_LINKED);
         linkedOrConsumed = true;
 
-        // 判断是否是并行 走不同逻辑
+        // 判断是否是并行 走不同逻辑   将自身作为参数传入 此时本对象可以直接获取到 source
         return isParallel()
+                // 代表并行执行
                ? terminalOp.evaluateParallel(this, sourceSpliterator(terminalOp.getOpFlags()))
+                // 代表串行执行
                : terminalOp.evaluateSequential(this, sourceSpliterator(terminalOp.getOpFlags()));
     }
 
@@ -268,7 +278,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
      *
      * @param generator the array generator to be used to create array instances
      * @return a flat array-backed Node that holds the collected output elements
-     * 将输出 结果 整合成一个 node 对象 在Stream 的抽象中 Node具备存储多个数据的能力
+     * 将输出 结果 整合成一个 node 对象 该方法应该就是对应.collect() 等
      */
     @SuppressWarnings("unchecked")
     final Node<E_OUT> evaluateToArrayNode(IntFunction<E_OUT[]> generator) {
@@ -284,13 +294,13 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
             // pipeline such that this operation will not be included in the
             // upstream slice and upstream operations will not be included
             // in this slice
-            // 将深度设置为0 就代表 不会将 处理 传递到上游??? 看来depth 有特殊含义
+            // 将本对象的深度置0 了  应该是从本对象开始 开启了一个新线程并处理任务
             depth = 0;
             // 并行处理
             return opEvaluateParallel(previousStage, previousStage.sourceSpliterator(0), generator);
         }
         else {
-            // 普通的执行
+            // 串行执行
             return evaluate(sourceSpliterator(0), true, generator);
         }
     }
@@ -303,7 +313,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
      * @return the source stage spliterator
      * @throws IllegalStateException if this pipeline stage is not the source
      *         stage.
-     *         将源pipeline 转换成迭代器对象
+     *         将head 中获取 迭代器对象 或者 使用携带的提供者对象来创建
      */
     @SuppressWarnings("unchecked")
     final Spliterator<E_OUT> sourceStageSpliterator() {
@@ -376,7 +386,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
     }
 
     /**
-     * close() 时 触发的函数  也就是设置到 sourceCloseAction 中
+     * 设置关闭钩子
      * @param closeHandler A task to execute when the stream is closed
      * @return
      */
@@ -387,7 +397,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
         sourceStage.sourceCloseAction =
                 (existingHandler == null)
                 ? closeHandler
-                        // 组合 2个 runnable 对象  实现中出现了回调风暴
+                        // 组合多个函数对象
                 : Streams.composeWithExceptions(existingHandler, closeHandler);
         return (S) this;
     }
@@ -395,7 +405,8 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
     // Primitive specialization use co-variant overrides, hence is not final
 
     /**
-     * 返回 迭代器对象
+     * 返回 迭代器对象  该方法不同于上面的  sourceStageSpliterator  如果本节点就是source 则一致
+     * 如果传入的是下面的某个节点
      * @return
      */
     @Override
@@ -405,6 +416,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
             throw new IllegalStateException(MSG_STREAM_LINKED);
         linkedOrConsumed = true;
 
+        // 如果本对象就是源头对象直接返回 对应属性
         if (this == sourceStage) {
             if (sourceStage.sourceSpliterator != null) {
                 @SuppressWarnings("unchecked")
@@ -416,16 +428,16 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
                 @SuppressWarnings("unchecked")
                 Supplier<Spliterator<E_OUT>> s = (Supplier<Spliterator<E_OUT>>) sourceStage.sourceSupplier;
                 sourceStage.sourceSupplier = null;
-                // 使用一个 包装对象来实现 惰性加载 只有真正调用 split的方法时  才执行 supplier 的 get() 方法 适用于一些 supplier 比较耗时的场景
+                // 使用一个 包装对象来实现 惰性加载 只有真正调用 split的方法时  才执行 supplier 的 get() 方法
                 return lazySpliterator(s);
             }
             else {
                 throw new IllegalStateException(MSG_CONSUMED);
             }
         }
-        // 如果本元素 不是 source
+        // 代表非head 节点
         else {
-            // 将一个 supplier 包装成 split
+            // 将 sourceSpliterator 方法 封装成 获取迭代器的函数 加上本对象 作为一个迭代器
             return wrap(this, () -> sourceSpliterator(0), isParallel());
         }
     }
@@ -464,6 +476,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
     private Spliterator<?> sourceSpliterator(int terminalFlags) {
         // Get the source spliterator of the pipeline
         Spliterator<?> spliterator = null;
+        // 先加载 source 的迭代器
         if (sourceStage.sourceSpliterator != null) {
             spliterator = sourceStage.sourceSpliterator;
             sourceStage.sourceSpliterator = null;
@@ -476,12 +489,13 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
             throw new IllegalStateException(MSG_CONSUMED);
         }
 
-        // 如果是并行  如果数据源是有状态的  stateful 是什么意思
+        // 如果是并行  如果数据源是有状态的 有状态 代表 必须将之前的动作执行完才能继续往下走
+        // 比如 limit() skip()
         if (isParallel() && sourceStage.sourceAnyStateful) {
             // Adapt the source spliterator, evaluating each stateful op
             // in the pipeline up to and including this pipeline stage.
             // The depth and flags of each pipeline stage are adjusted accordingly.
-            // 这里将 深度暂时设置为 1 ???
+            // 将深度设置为1
             int depth = 1;
             // 下面这个循环的意思是 从source 开始迭代 直到 走到本元素
             for (@SuppressWarnings("rawtypes") AbstractPipeline u = sourceStage, p = sourceStage.nextStage, e = this;
@@ -489,23 +503,22 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
                  u = p, p = p.nextStage) {
 
                 int thisOpFlags = p.sourceOrOpFlags;
-                // 判断当前被选中的pipline 是否是有状态的
+                // p 一般情况下是下个节点  如果当前节点是最后一个节点 那么 next节点就是自身
                 if (p.opIsStateful()) {
-                    // 这里好像是重置深度
+                    // 将深度置0
                     depth = 0;
 
-                    // 该流是否发生过 短路???
+                    // 下个节点是否是 短路动作 是就去掉
                     if (StreamOpFlag.SHORT_CIRCUIT.isKnown(thisOpFlags)) {
                         // Clear the short circuit flag for next pipeline stage
                         // This stage encapsulates short-circuiting, the next
                         // stage may not have any short-circuit operations, and
                         // if so spliterator.forEachRemaining should be used
                         // for traversal
-                        // 去除该标识
                         thisOpFlags = thisOpFlags & ~StreamOpFlag.IS_SHORT_CIRCUIT;
                     }
 
-                    // 将该 迭代器对象包装成一个并行处理迭代器
+                    // 使用下个对象 将本对象 和 source迭代器包装
                     spliterator = p.opEvaluateParallelLazy(u, spliterator);
 
                     // Inject or clear SIZED on the source pipeline stage

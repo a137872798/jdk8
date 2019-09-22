@@ -1299,7 +1299,7 @@ public class ForkJoinPool extends AbstractExecutorService {
          * or any other cancelled task. Used only by awaitJoin.
          *
          * @return true if queue empty and task not known to be done
-         * 如果队列中存在该任务 从队列中移除 并执行  此时task 很有可能不在 top的位置
+         * 如果队列中存在该任务 从队列中移除 并执行  任务是有可能不在top 的位置的
          */
         final boolean tryRemoveAndExec(ForkJoinTask<?> task) {
             ForkJoinTask<?>[] a;
@@ -1312,11 +1312,11 @@ public class ForkJoinPool extends AbstractExecutorService {
                     for (ForkJoinTask<?> t; ; ) {      // traverse from s to b
                         // 拉取最顶端的元素
                         long j = ((--s & m) << ASHIFT) + ABASE;
-                        // 如果当前偏移量没有找到对应元素
+                        // 这里是 偏移量 对应的task 是否存在 会从top 一直往 base 走
                         if ((t = (ForkJoinTask<?>) U.getObject(a, j)) == null)
-                            // 如果该对象就是 top元素 代表刚好打算执行的任务被窃取了
+                            // 如果该对象就是 top元素 代表刚好打算执行的任务被窃取了 就会帮助被窃取者执行它的任务
                             return s + 1 == top;     // shorter than expected
-                            // 判断下个元素 与传入元素是否匹配 看来这里只会执行 top or base 其他任务 即使匹配了 也因为 removed == false 而不执行
+                        // 这里是 任务存在的情况 下 再做匹配
                         else if (t == task) {
                             boolean removed = false;
                             // 代表传入的 task 就是顶部的任务
@@ -1326,7 +1326,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                                     U.putOrderedInt(this, QTOP, s);
                                     removed = true;
                                 }
-                                // 如果是底部 这里替换成 空任务是为什么
+                                // 注意 一开始 b被赋值成了base 也就是 一旦任务能匹配上 这里就会 从栈中 非top 的位置 获取任务 并执行
                             } else if (base == b)      // replace with proxy
                                 removed = U.compareAndSwapObject(
                                         a, j, task, new EmptyTask());
@@ -1335,7 +1335,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                                 // 执行任务后会退到外层  之后根据task.status 来判断是否完成任务 完成了就返回false
                                 task.doExec();
                             break;
-                            // 如果任务已经完成 且是 顶部元素
+                         // 如果任务已经完成 且是 顶部元素
                         } else if (t.status < 0 && s + 1 == top) {
                             if (U.compareAndSwapObject(a, j, t, null))
                                 U.putOrderedInt(this, QTOP, s);
@@ -1358,6 +1358,7 @@ public class ForkJoinPool extends AbstractExecutorService {
          * in either shared or owned mode. Used only by helpComplete.
          *
          * @param mode 代表是 独占模式还是共享模式
+         *             从队列中弹出 CC 任务
          */
         final CountedCompleter<?> popCC(CountedCompleter<?> task, int mode) {
             int s;
@@ -1421,7 +1422,7 @@ public class ForkJoinPool extends AbstractExecutorService {
             else {
                 // 获取队列的底部元素
                 long j = (((a.length - 1) & b) << ASHIFT) + ABASE;
-                // 如果底部元素不存在了 代表是被其他线程窃取了
+                // 如果底部元素不存在了 代表是被其他线程窃取了 这样要进行重试
                 if ((o = U.getObjectVolatile(a, j)) == null)
                     h = 2;                  // retryable
                     // 如果底部元素不是 CC 类型代表匹配异常
@@ -1431,6 +1432,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                 else {
                     CountedCompleter<?> t = (CountedCompleter<?>) o;
                     for (CountedCompleter<?> r = t; ; ) {
+                        // 注意这里 也是用 == 来判断
                         if (r == task) {
                             // 代表底部元素匹配成功 执行任务并移除该任务
                             if (base == b &&
@@ -2395,6 +2397,7 @@ public class ForkJoinPool extends AbstractExecutorService {
      * @param w        caller  调用该方法的队列  该队列是从 wq[] 中按照某种散列函数获取的
      * @param maxTasks if non-zero, the maximum number of other tasks to run  代表执行的其他任务数量  如果为0 就是不做限制 不断的拉取CC任务
      * @return task status on exit
+     * 从队列中拉取  cc 任务并执行
      */
     final int helpComplete(WorkQueue w, CountedCompleter<?> task,
                            int maxTasks) {
@@ -2404,33 +2407,40 @@ public class ForkJoinPool extends AbstractExecutorService {
         if ((ws = workQueues) != null && (m = ws.length - 1) >= 0 &&
                 task != null && w != null) {
             int mode = w.config;                 // for popCC
-            // 这2步好像是在计算下标
+            // 生成一个随机值
             int r = w.hint ^ w.top;              // arbitrary seed for origin
             int origin = r & m;                  // first queue to scan
             int h = 1;                           // 1:ran, >1:contended, <0:hash
             for (int k = origin, oldSum = 0, checkSum = 0; ; ) {
                 CountedCompleter<?> p;
                 WorkQueue q;
-                // 如果任务已完成 退出循环
+                // 如果任务已完成 退出循环  这里应该是  该 CC任务关联的 所有分散任务都完成的情况  status 才会小于0
                 if ((s = task.status) < 0)
                     break;
-                // 从任务队列中弹出 CC   mode 代表是 共享模式还是独占模式  (CC 要求是workQueue 中top所对应的元素 且pop 会将CC 从 队列中移除)
-                // 如果上次执行结果成功这里会继续拉取任务
+                // 从本队列中弹出 CC 任务
                 if (h == 1 && (p = w.popCC(task, mode)) != null) {
-                    // 执行 CC 任务
+                    // 执行 CC 任务  该任务在完成时 总是返回false
                     p.doExec();                  // run local task
-                    // 如果maxTask 刚好为0 返回
+                    // 默认情况下 maxTask == 0 这里代表  maxTask 必须 不为0 且 正好本次为0 了才会退出 否则会不断循环
                     if (maxTasks != 0 && --maxTasks == 0)
                         break;
-                    // 这2个是干嘛用的???
+                    // 将 起始下标重置 进入下次循环 继续寻找CC任务 并执行  可以这样理解 当队列中存在 CC任务时 会优先全部执行
+                    // 而跳过其他任务  在 ForkJoin 中 实际上 任务按照什么顺序存放并不是很重要 尽可能按照栈的方式存放有2个优势
+                    // 1： 任务越早的划分 每个线程分到的任务耗时差不多 减少偷取
+                    // 2： 先偷底部 会减少竞争
                     origin = k;                  // reset
                     oldSum = checkSum = 0;
                     // 进入下面这个分支代表 没有找到CC任务
                 } else {                           // poll other queues
-                    // 尝试去其他队列拉取任务 如果队列还没有初始化 设置成0  0是什么含义???
+                    // 尝试取其他队列继续拉取 CC 任务 因为有可能在本队列中的 任务 被其他线程偷走了 这时 要拿回来执行
+
+                    // 当其他队列中 某个队列没有找到时
                     if ((q = ws[k]) == null)
                         h = 0;
-                        // 这里代表找到了 wq 开始从底部尝试拉取任务 <0 代表没有找到对应的任务
+                        // 代表 当前选择的队列中 有 CC 任务  注意这里并不是普通的执行 还传入了 task
+                        // 同一组 CC 任务  使用  == 进行判断会为 true 也就是 CC 任务不同于 普通任务 一般的任务在 fork 后 会生成新任务
+                        // 而CC任务是又一次进入了队列 当分散的任务全部执行完时 才算真正完成该任务 且判断条件是 status < 0
+                        // 因为  doExec 总是 false
                     else if ((h = q.pollAndExecCC(task)) < 0)
                         // 记录结果
                         checkSum += h;
@@ -2447,7 +2457,8 @@ public class ForkJoinPool extends AbstractExecutorService {
                         // 否则 无论 1还是2 都要更新下标 拉取新的任务
                         origin = k = r & m;      // move and restart
                         oldSum = checkSum = 0;
-                        // 这里代表没有找到匹配任务 h = -1 或者 没有找到 对应的wq h=0
+                        // 这里推测是遍历其余队列 将 C 任务 取出来并执行 h == 0 代表当前选择的队列没任务 就要更新 下标值
+                        // == origin 代表过了一轮了
                     } else if ((k = (k + 1) & m) == origin) {
                         if (oldSum == (oldSum = checkSum))
                             break;
@@ -2650,7 +2661,7 @@ public class ForkJoinPool extends AbstractExecutorService {
      * @param task     the task  被阻塞的任务
      * @param deadline for timed waits, if nonzero
      * @return task status on exit
-     * 阻塞直到指定的任务完成
+     * 阻塞直到指定的任务完成  任务是 可能不在  top的位置的  这时就要考虑 该线程 该如何工作 会被阻塞么???
      */
     final int awaitJoin(WorkQueue w, ForkJoinTask<?> task, long deadline) {
         int s = 0;
@@ -2669,7 +2680,6 @@ public class ForkJoinPool extends AbstractExecutorService {
                 // 如果是cc 类型 从各个队列拉取 CC 任务并执行
                 if (cc != null)
                     helpComplete(w, cc, 0);
-                    // 如果没有任务 (base == top)  或者 tryRemoveAndExec == true 代表任务已经被移除 可能就是其他线程窃取了
                 else if (w.base == w.top || w.tryRemoveAndExec(task))
                     // 帮助窃取者完成它的任务
                     helpStealer(w, task);

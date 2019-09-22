@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *        result type
  * @param <K> type of child and sibling tasks
  * @since 1.8
- * 可短路
+ * 代表可短路的动作 比如 anyMatch()  findFirst() 这种
  */
 @SuppressWarnings("serial")
 abstract class AbstractShortCircuitTask<P_IN, P_OUT, R,

@@ -41,7 +41,8 @@ import java.util.Spliterator;
  * @param <E_IN> the type of input elements
  * @param <R>    the type of the result
  * @since 1.8
- * 代表一个终止操作
+ * 代表一个终止操作   比如 .collect()  每个流对象 一开始都没有执行 通过 .map() 等方法 将action封装成Pipleline 并追加到 source上
+ * 而当 调用到一个终止操作时 会触发整个流
  */
 interface TerminalOp<E_IN, R> {
     /**
