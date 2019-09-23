@@ -50,7 +50,6 @@ final class MatchOps {
      * 代表匹配类型
      */
     enum MatchKind {
-        // 短路的概念大概是 从流中 一旦找到某个匹配的结果就设置 shardingResult
 
         /** Do all elements match the predicate? */
         ANY(true, true),

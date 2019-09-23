@@ -107,7 +107,7 @@ abstract class PipelineHelper<P_OUT> {
      *
      * @param sink the {@code Sink} to receive the results
      * @param spliterator the spliterator describing the source input to process
-     *                    包装并复制信息
+     *                    包装sink 对象并处理source 中的数据
      */
     abstract<P_IN, S extends Sink<P_OUT>> S wrapAndCopyInto(S sink, Spliterator<P_IN> spliterator);
 
@@ -125,7 +125,7 @@ abstract class PipelineHelper<P_OUT> {
      *
      * @param wrappedSink the destination {@code Sink}
      * @param spliterator the source {@code Spliterator}
-     *                    拷贝信息???
+     *                    将source 的数据 通过一个sink 的过滤链处理后 最终到达下游 保存在sink中
      */
     abstract<P_IN> void copyInto(Sink<P_IN> wrappedSink, Spliterator<P_IN> spliterator);
 

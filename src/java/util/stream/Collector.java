@@ -346,7 +346,6 @@ public interface Collector<T, A, R> {
          * Indicates that the finisher function is the identity function and
          * can be elided.  If set, it must be the case that an unchecked cast
          * from A to R will succeed.
-         * 代表不存在 终结函数???  这样 就不需要 判断 是否能转型成功
          */
         IDENTITY_FINISH
     }

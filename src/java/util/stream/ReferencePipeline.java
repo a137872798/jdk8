@@ -157,6 +157,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
      */
     @Override
     final void forEachWithCancel(Spliterator<P_OUT> spliterator, Sink<P_OUT> sink) {
+        // hasValue == false  且 还可以从source 中获取元素并处理
         do { } while (!sink.cancellationRequested() && spliterator.tryAdvance(sink));
     }
 
@@ -224,19 +225,27 @@ abstract class ReferencePipeline<P_IN, P_OUT>
     @Override
     public final Stream<P_OUT> filter(Predicate<? super P_OUT> predicate) {
         Objects.requireNonNull(predicate);
-        // 应该是代表该流被过滤后 就无法确定长度了
+        // 这里将每个操作包装成op对象  (该对象也是一个管道对象 且内部包含了上游对象)
+        // 这里传入了 NOT_SIZED 的标识
         return new StatelessOp<P_OUT, P_OUT>(this, StreamShape.REFERENCE,
                                      StreamOpFlag.NOT_SIZED) {
+
+            // 该op 对象在 接受到从 下游传过来的 Sink 对象后 会将逻辑进行包装 之后 继续往上游传递
+            // (在wrapSink() 方法中会从下往上 获取pipeline 对象 并不断的包装 sink 对象)
             @Override
             Sink<P_OUT> opWrapSink(int flags, Sink<P_OUT> sink) {
                 return new Sink.ChainedReference<P_OUT, P_OUT>(sink) {
+                    /**
+                     * begin(-1) 是什么用的
+                     * @param size
+                     */
                     @Override
                     public void begin(long size) {
                         downstream.begin(-1);
                     }
 
                     /**
-                     * 该 sink 对象在接受元素前 要先满足谓语条件
+                     * 只有满足条件的对象才会被传递到下游
                      * @param u
                      */
                     @Override
@@ -259,7 +268,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
             Sink<P_OUT> opWrapSink(int flags, Sink<R> sink) {
                 return new Sink.ChainedReference<P_OUT, R>(sink) {
                     /**
-                     * 接受的元素 会使用 mapper函数进行处理
+                     * 接受的元素 会使用 mapper函数进行处理 就会将 A -> B 类型数据
                      * @param u
                      */
                     @Override
@@ -337,6 +346,14 @@ abstract class ReferencePipeline<P_IN, P_OUT>
         // We can do better than this, by polling cancellationRequested when stream is infinite
         return new StatelessOp<P_OUT, R>(this, StreamShape.REFERENCE,
                                      StreamOpFlag.NOT_SORTED | StreamOpFlag.NOT_DISTINCT | StreamOpFlag.NOT_SIZED) {
+
+            /**
+             * 包装sink 对象
+             * @param flags The combined stream and operation flags up to, but not
+             *        including, this operation
+             * @param sink sink to which elements should be sent after processing
+             * @return
+             */
             @Override
             Sink<P_OUT> opWrapSink(int flags, Sink<R> sink) {
                 return new Sink.ChainedReference<P_OUT, R>(sink) {
@@ -347,7 +364,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
 
                     @Override
                     public void accept(P_OUT u) {
-                        // 首先使用map 将元素转换成一个新的 stream
+                        // 原来source 中每个元素 都通过mapper 变成一个新的 stream
                         try (Stream<? extends R> result = mapper.apply(u)) {
                             // We can do better that this too; optimize for depth=0 case and just grab spliterator and forEach it
                             if (result != null)
@@ -507,7 +524,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
     // Terminal operations from Stream  针对流的终止操作
 
     /**
-     * evaluate 实现 就是委托给 生成的 TerminalOp 对象
+     * 构造sink 链处理元素   这里要注意 forEach 是一个 terminalOp
      * @param action a <a href="package-summary.html#NonInterference">
      */
     @Override
@@ -592,7 +609,8 @@ abstract class ReferencePipeline<P_IN, P_OUT>
     }
 
     /**
-     * Collector 内部维护了 几个核心的函数对象 该方法代表将流转换成对应的容器对象
+     * Collector 内部维护了 几个核心的函数对象
+     * Stream 对象在调用该代表终止的方法时会触发之前 暂存的动作
      * @param collector the {@code Collector} describing the reduction
      * @param <R>
      * @param <A>
@@ -602,23 +620,27 @@ abstract class ReferencePipeline<P_IN, P_OUT>
     @SuppressWarnings("unchecked")
     public final <R, A> R collect(Collector<? super P_OUT, A, R> collector) {
         A container;
+        // 单纯设置 parallel 不能确保 并行执行 必须还要 collector 对象本身支持 并发操作  toList 本身不支持并发
         if (isParallel()
                 && (collector.characteristics().contains(Collector.Characteristics.CONCURRENT))
                 // 要求是 无序的才方便 并行执行
                 && (!isOrdered() || collector.characteristics().contains(Collector.Characteristics.UNORDERED))) {
             // 通过supplier 构建容器对象 对应到 ArrayList::new
             container = collector.supplier().get();
+            // 获取结合函数 这里source 中每个元素应该是
             BiConsumer<A, ? super P_OUT> accumulator = collector.accumulator();
             // 针对每个元素 都会触发 将元素添加到容器中
             forEach(u -> accumulator.accept(container, u));
         }
         else {
-            // 使用reduce 构建模板???
+            // 如果是非并发的 这里使用 ReduceOp 来创建节点 同时该节点是一个 终止节点 会触发之前写入的全部动作
+            // 返回的 container 是已经处理过 source 的sink 对象
             container = evaluate(ReduceOps.makeRef(collector));
         }
-        // 是否可以忽略 finisher 函数
+        // 是否可以忽略 finisher 函数  Array.stream() 生成的collector是可以忽略的 这里直接进行强转
         return collector.characteristics().contains(Collector.Characteristics.IDENTITY_FINISH)
                ? (R) container
+                // 需要使用特殊函数 对返回的结果做处理
                : collector.finisher().apply(container);
     }
 
@@ -655,7 +677,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
      * @param <E_IN> type of elements in the upstream source
      * @param <E_OUT> type of elements in produced by this stage
      * @since 1.8
-     * pipeline 可以是链式结构 Head 代表一个特殊的链式对象
+     * 代表节点的源头  比如调用 list.stream() 就是返回一个 Head 对象
      */
     static class Head<E_IN, E_OUT> extends ReferencePipeline<E_IN, E_OUT> {
         /**
@@ -677,6 +699,7 @@ abstract class ReferencePipeline<P_IN, P_OUT>
          * @param source {@code Spliterator} describing the stream source
          * @param sourceFlags the source flags for the stream source, described
          *                    in {@link StreamOpFlag}
+         *                    代表source 是从一个迭代器中获取数据  比如 ArrayListSpliterator 该迭代器 对象内部已经封装了数据  并且提供一个拆分数据的方法
          */
         Head(Spliterator<?> source,
              int sourceFlags, boolean parallel) {
@@ -688,6 +711,13 @@ abstract class ReferencePipeline<P_IN, P_OUT>
             throw new UnsupportedOperationException();
         }
 
+        /**
+         * head 对象不允许将数据传递到下游
+         * @param flags The combined stream and operation flags up to, but not
+         *        including, this operation
+         * @param sink sink to which elements should be sent after processing
+         * @return
+         */
         @Override
         final Sink<E_IN> opWrapSink(int flags, Sink<E_OUT> sink) {
             throw new UnsupportedOperationException();
@@ -753,16 +783,16 @@ abstract class ReferencePipeline<P_IN, P_OUT>
      * @param <E_IN> type of elements in the upstream source
      * @param <E_OUT> type of elements in produced by this stage
      * @since 1.8
-     * 一个 有状态的操作对象
+     * 增加一个状态流
      */
     abstract static class StatefulOp<E_IN, E_OUT>
             extends ReferencePipeline<E_IN, E_OUT> {
         /**
          * Construct a new Stream by appending a stateful intermediate operation
          * to an existing stream.
-         * @param upstream The upstream pipeline stage
-         * @param inputShape The stream shape for the upstream pipeline stage
-         * @param opFlags Operation flags for the new stage
+         * @param upstream The upstream pipeline stage  上游对象
+         * @param inputShape The stream shape for the upstream pipeline stage  代表是什么类型的 可能是引用类型 或者 Int Long
+         * @param opFlags Operation flags for the new stage  新的操作相关的标识
          */
         StatefulOp(AbstractPipeline<?, E_IN, ?> upstream,
                    StreamShape inputShape,
@@ -771,11 +801,23 @@ abstract class ReferencePipeline<P_IN, P_OUT>
             assert upstream.getOutputShape() == inputShape;
         }
 
+        /**
+         * 该操作默认都是 stateful 默认为true
+         * @return
+         */
         @Override
         final boolean opIsStateful() {
             return true;
         }
 
+        /**
+         * 进行并行操作
+         * @param helper the pipeline helper describing the pipeline stages
+         * @param spliterator the source {@code Spliterator}
+         * @param generator the array generator
+         * @param <P_IN>
+         * @return
+         */
         @Override
         abstract <P_IN> Node<E_OUT> opEvaluateParallel(PipelineHelper<E_OUT> helper,
                                                        Spliterator<P_IN> spliterator,

@@ -39,6 +39,7 @@ import java.util.function.IntFunction;
  *
  * @since 1.8
  * 传入一个 流对象 进行去重操作后返回
+ * 该操作属于一个 stateful 动作
  */
 final class DistinctOps {
 
@@ -51,10 +52,11 @@ final class DistinctOps {
      * @param <T> the type of both input and output elements
      * @param upstream a reference stream with element type T
      * @return the new stream
-     * 传入一个 管道对象 做特殊处理后返回一个新的管道
+     * 追加一个去重的操作到上游 并返回新的流
      */
     static <T> ReferencePipeline<T, T> makeRef(AbstractPipeline<?, T, ?> upstream) {
         return new ReferencePipeline.StatefulOp<T, T>(upstream, StreamShape.REFERENCE,
+                                                      // 设置特殊的标识
                                                       StreamOpFlag.IS_DISTINCT | StreamOpFlag.NOT_SIZED) {
 
             /**
@@ -77,7 +79,7 @@ final class DistinctOps {
             }
 
             /**
-             * 并行计算结果
+             * 并行操作实现
              * @param helper
              * @param spliterator
              * @param generator
@@ -88,12 +90,12 @@ final class DistinctOps {
             <P_IN> Node<T> opEvaluateParallel(PipelineHelper<T> helper,
                                               Spliterator<P_IN> spliterator,
                                               IntFunction<T[]> generator) {
-                // 如果本身就已经去重了 不做任何处理
+                // 如果本身就已经去重了 不做任何处理  比如 连续调用2次 A.distinct().distinct();
                 if (StreamOpFlag.DISTINCT.isKnown(helper.getStreamAndOpFlags())) {
                     // No-op
                     return helper.evaluate(spliterator, false, generator);
                 }
-                // 这跟ORDERED 有什么关系???
+                // 如果在之前的操作中已经标识了 Order
                 else if (StreamOpFlag.ORDERED.isKnown(helper.getStreamAndOpFlags())) {
                     return reduce(helper, spliterator);
                 }
@@ -150,7 +152,7 @@ final class DistinctOps {
             }
 
             /**
-             * 包装 Sink 对象
+             * 包装 Sink 对象  为 整个处理链增加去重的逻辑
              * @param flags The combined stream and operation flags up to, but not
              *        including, this operation
              * @param sink sink to which elements should be sent after processing

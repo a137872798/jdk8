@@ -167,7 +167,7 @@ public final class Collectors {
          */
         private final BinaryOperator<A> combiner;
         /**
-         * 产生结果的函数???
+         * 相当于一个转换函数
          */
         private final Function<A, R> finisher;
         private final Set<Characteristics> characteristics;

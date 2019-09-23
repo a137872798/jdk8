@@ -730,7 +730,9 @@ enum StreamOpFlag {
      * @return the stream flags.
      */
     static int fromCharacteristics(Spliterator<?> spliterator) {
+        // 为迭代器增加一些 携带的 标识
         int characteristics = spliterator.characteristics();
+        // 如果该流包含Comparator 就增加 排序的 标识  characteristics & SPLITERATOR_CHARACTERISTICS_MASK 之后代表该标识是针对迭代器的
         if ((characteristics & Spliterator.SORTED) != 0 && spliterator.getComparator() != null) {
             // Do not propagate the SORTED characteristic if it does not correspond
             // to a natural sort order

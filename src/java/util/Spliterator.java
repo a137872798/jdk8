@@ -395,7 +395,7 @@ public interface Spliterator<T> {
      *
      * @return the estimated size, or {@code Long.MAX_VALUE} if infinite,
      *         unknown, or too expensive to compute.
-     *         预估长度???
+     *         预估长度，  在整个流中如果没有 短路op 的话 就可以将source的数据长度 作为该长度
      */
     long estimateSize();
 

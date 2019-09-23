@@ -111,7 +111,7 @@ import java.util.function.LongConsumer;
  * The {@code accept()} method applies the mapping function from {@code U} to
  * {@code int} and passes the resulting value to the downstream {@code Sink}.
  * @since 1.8
- * 拓展 Consumer
+ * 该对象定义了数据的传播  (上游是如何将数据发送到下游的)
  */
 interface Sink<T> extends Consumer<T> {
     /**
@@ -125,6 +125,7 @@ interface Sink<T> extends Consumer<T> {
      *             <p>Prior to this call, the sink must be in the initial state, and after
      *             this call it is in the active state.
      *             设定明确的大小 (关于会发送多少元素到下游)
+     *             以及初始化下游的容器
      */
     default void begin(long size) {
     }
@@ -136,7 +137,7 @@ interface Sink<T> extends Consumer<T> {
      *
      * <p>Prior to this call, the sink must be in the active state, and after
      * this call it is returned to the initial state.
-     * 代表所有元素都已经推到下游了
+     * 代表所有元素都已经推到下游了 执行的后置函数
      */
     default void end() {
     }
@@ -145,7 +146,7 @@ interface Sink<T> extends Consumer<T> {
      * Indicates that this {@code Sink} does not wish to receive any more data.
      *
      * @return true if cancellation is requested
-     * 代表不期望接收其他元素
+     * 代表不期望继续接受元素  针对 短路情况  一旦上游的某个数据满足sink 的过滤条件后 就不再期望获取其他元素了
      * @implSpec The default implementation always returns false.
      */
     default boolean cancellationRequested() {
@@ -246,7 +247,6 @@ interface Sink<T> extends Consumer<T> {
      * {@code accept()} method on the downstream {@code Sink}.
      * Sink 的骨架类  Sink 会将接收到的元素 传递到下游
      * 子类 需要重写 Consumer.accept 方法 该方法是从 Sink 继承来的
-     * 可以看作是 一个过滤器 sink 是目的地 通过使用 ChainedRef 包装后 元素首先要过这层才能到达下游
      */
     static abstract class ChainedReference<T, E_OUT> implements Sink<T> {
 

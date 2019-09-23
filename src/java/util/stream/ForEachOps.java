@@ -52,7 +52,7 @@ import java.util.function.LongConsumer;
  * prematurely terminated.
  *
  * @since 1.8
- * 针对 forEach 的操作
+ * 针对 forEach 的操作   该对象是一个 TerminalOp 对象
  */
 final class ForEachOps {
 
@@ -153,7 +153,7 @@ final class ForEachOps {
         }
 
         /**
-         * 串行操作 就是将迭代器内的数据 拷贝到本对象  Sink 对象本身是具备存储数据的能力的 通过 begin 和end 方法 还有 accept
+         * 串行操作 将source 中的数据 通过 sink 链进行处理 之后传递到底部
          * @param helper the pipeline helper
          * @param spliterator the source spliterator
          * @param <S>
@@ -167,6 +167,7 @@ final class ForEachOps {
 
         /**
          * 并行执行 都是通过创建对应的 task 对象后 执行
+         * 注意这里还没有对 sink 进行加工
          * @param helper the pipeline helper
          * @param spliterator the source spliterator
          * @param <S>
@@ -175,16 +176,23 @@ final class ForEachOps {
         @Override
         public <S> Void evaluateParallel(PipelineHelper<T> helper,
                                          Spliterator<S> spliterator) {
+
+            // 判断该并行对象 是否有序  传入本对象 作为 sink 对象  注意这里的sink 对象没有被包装
             if (ordered)
                 new ForEachOrderedTask<>(helper, spliterator, this).invoke();
             else
-                // wrapSink 将本对象包装后返回
+                // 先将本sink 对象通过 每个环节进行包装 之后构建task 对象并执行
+                // invoke 方法 会在外部线程直接执行 任务 如果任务没有完成 则将剩余任务设置到 FJPool.WorkQueue 中
                 new ForEachTask<>(helper, spliterator, helper.wrapSink(this)).invoke();
             return null;
         }
 
         // TerminalSink
 
+        /**
+         * forEach 操作调用 get 返回null
+         * @return
+         */
         @Override
         public Void get() {
             return null;
@@ -206,7 +214,7 @@ final class ForEachOps {
             }
 
             /**
-             * 将 添加数据的逻辑 委托到 consumer 对象上
+             * 使用设置的消费者 处理 每个传递下来的元素
              * @param t the input argument
              */
             @Override
@@ -281,26 +289,25 @@ final class ForEachOps {
 
     /** A {@code ForkJoinTask} for performing a parallel for-each operation */
     /**
-     * 用于处理并行任务的 task 对象
+     * 无序状态下的并行处理任务 该sink 对象已经包含了整个处理链了   该对象本身 继承自 ForkJoinTask 的 CC 对象 该对象 doExec 总是返回false 且一旦被执行会将 关联的 其他CC 优先执行
+     * (在 FJPool 中任务会被不断的拆分)
      * @param <S>
      * @param <T>
      */
     @SuppressWarnings("serial")
     static final class ForEachTask<S, T> extends CountedCompleter<Void> {
         /**
-         * 包含数据的迭代器对象
+         * 内部包含了source 数据
          */
         private Spliterator<S> spliterator;
         /**
-         * 数据容器
+         * 处理上游数据并设置 结果的 对象(实际上是一个链式对象)
          */
         private final Sink<S> sink;
-        /**
-         * 控制数据流程
-         */
+
         private final PipelineHelper<T> helper;
         /**
-         * 尺寸???
+         * 目标长度
          */
         private long targetSize;
 
@@ -314,39 +321,60 @@ final class ForEachOps {
             this.targetSize = 0L;
         }
 
+        /**
+         * 使用 父节点进行初始化
+         * @param parent 父节点对象
+         * @param spliterator 当前的数据源 一般是从parent 中分裂出来的 只有一部分数据
+         */
         ForEachTask(ForEachTask<S, T> parent, Spliterator<S> spliterator) {
+            // 对应到上层的 completer 节点
             super(parent);
             this.spliterator = spliterator;
+            // sink 对象本身会被不断的继承 且 sink 本身已经是一个加工完的处理链了
             this.sink = parent.sink;
+            // 这个值 代表拆分的 阈值 小于这个值就不再拆分了
             this.targetSize = parent.targetSize;
+            // 主要是为了获取 stream 的标识
             this.helper = parent.helper;
         }
 
         // Similar to AbstractTask but doesn't need to track child tasks
+        // invoke() 方法 首先在外部线程执行该任务
         public void compute() {
             Spliterator<S> rightSplit = spliterator, leftSplit;
-            // 获取 右侧迭代器 也就是 spliterator 的长度信息
+            // 获取source 的总长度
             long sizeEstimate = rightSplit.estimateSize(), sizeThreshold;
+            // 一般情况 下 初始化 targetSize 就是0
             if ((sizeThreshold = targetSize) == 0L)
-                // 获取一个 推荐大小
+                // 获取一个 拆分的 阈值 可能是 小于这个值就不再拆分了
                 targetSize = sizeThreshold = AbstractTask.suggestTargetSize(sizeEstimate);
-            // 判断是否短路
+            // 判断是否包含短路的逻辑
             boolean isShortCircuit = StreamOpFlag.SHORT_CIRCUIT.isKnown(helper.getStreamAndOpFlags());
             // 是否拆分右侧
             boolean forkRight = false;
+            // 该对象是整个处理链的具象化体现  source 中每个元素经过它过滤后剩余的 就是 stream 返回的结果
             Sink<S> taskSink = sink;
             ForEachTask<S, T> task = this;
-            // 没有短路 且能 接受请求时
+            // 没有短路 且能 接受请求时  短路 就对应 anyMatch() 之类的方法
             while (!isShortCircuit || !taskSink.cancellationRequested()) {
+                // 下面的代码 实际上就是 FJTask 的标准模板
+
                 // 代表不能再拆分了
                 if (sizeEstimate <= sizeThreshold ||
+                        // 或者拆分的结果为null
                     (leftSplit = rightSplit.trySplit()) == null) {
+                    // 当右侧的任务无法再拆分时 就进行真正的过滤逻辑
                     task.helper.copyInto(taskSink, rightSplit);
                     break;
                 }
-                // 初始化一个 左节点对象 并以 task 作为 父节点
+
+                // 这里就是对应 根据数据大小拆分任务的逻辑  为什么以这种方式拆分就不细看了 核心就是将大块任务拆分后设置到 FJPool 中
+                // 当任务无法拆分时 就会从 source 中将数据填充到 sink中(需要经过一连串的过滤链) 但是这里很可能是无序的  针对要求有序的 任务不能按这种方式拆分
+
+                // 初始化一个 左节点对象 并以 task 作为 父节点  因为 leftSplit = rightSplit.trySplit() 使得 leftSplit 已经是分裂过的数据了
+                // 每次的 leftTask 都是上层拆分出来的
                 ForEachTask<S, T> leftTask = new ForEachTask<>(task, leftSplit);
-                // 增加父节点的悬挂节点
+                // 增加父节点的悬挂节点  一般每个节点都会悬挂2个
                 task.addToPendingCount(1);
                 ForEachTask<S, T> taskToFork;
                 if (forkRight) {
@@ -356,15 +384,18 @@ final class ForEachOps {
                     taskToFork = task;
                     task = leftTask;
                 }
+                // 首次拆分进入下面 代表本次插入FJPool 的是左侧的任务
                 else {
+                    // 下次会插入右侧的任务
                     forkRight = true;
                     taskToFork = leftTask;
                 }
+                // 将左侧任务 也就是从 父节点拆分出来的任务添加到线程池中 (左节点会在后台线程继续执行 compute 逻辑)
                 taskToFork.fork();
                 sizeEstimate = rightSplit.estimateSize();
             }
             task.spliterator = null;
-            // 调用了 fork 难道任务就完成了???
+            // 减少一个悬挂任务 因为本线程退出就意味着 本悬挂任务已经完成 （还有很多后台任务在线程池中处理）
             task.propagateCompletion();
         }
     }
@@ -419,50 +450,72 @@ final class ForEachOps {
          * reporting of elements, covered by tasks d, e, f and g, as specified
          * by the forEachOrdered operation.
          * 按照上面的说明 好像执行顺序是  d -> e -> b -> f -> g -> c -> a
+         * 就是为了保证有序执行
          */
 
+        /**
+         * 该对象是用来获取长度信息的 便于计算拆分阈值
+         */
         private final PipelineHelper<T> helper;
+        /**
+         * 存放source 数据的对象
+         */
         private Spliterator<S> spliterator;
+        /**
+         * 拆分阈值
+         */
         private final long targetSize;
         /**
-         * 计算容器
+         * 这里使用了一个额外的容器
          */
         private final ConcurrentHashMap<ForEachOrderedTask<S, T>, ForEachOrderedTask<S, T>> completionMap;
+        /**
+         * 未包装的 sink 对象 accept() 通过使用一个 consumer 处理数据
+         */
         private final Sink<T> action;
         /**
-         * 左处理器???
+         * 左前置节点
          */
         private final ForEachOrderedTask<S, T> leftPredecessor;
         private Node<T> node;
 
+        /**
+         * 初始化 顺序任务对象
+         * @param helper
+         * @param spliterator
+         * @param action
+         */
         protected ForEachOrderedTask(PipelineHelper<T> helper,
                                      Spliterator<S> spliterator,
                                      Sink<T> action) {
+            // 父类的 complete 对象为null
             super(null);
             this.helper = helper;
             this.spliterator = spliterator;
             this.targetSize = AbstractTask.suggestTargetSize(spliterator.estimateSize());
             // Size map to avoid concurrent re-sizes
-            // 获取容器大小
             this.completionMap = new ConcurrentHashMap<>(Math.max(16, AbstractTask.LEAF_TARGET << 1));
             this.action = action;
             this.leftPredecessor = null;
         }
 
         /**
-         * 通过一个 左处理器进行初始化
+         * 通过一个 父节点进行初始化
          * @param parent
          * @param spliterator
-         * @param leftPredecessor
+         * @param leftPredecessor 指定的左前置节点
          */
         ForEachOrderedTask(ForEachOrderedTask<S, T> parent,
                            Spliterator<S> spliterator,
                            ForEachOrderedTask<S, T> leftPredecessor) {
+            // 设置父类的 complete
             super(parent);
             this.helper = parent.helper;
             this.spliterator = spliterator;
             this.targetSize = parent.targetSize;
+            // 看来子节点都是使用同一个并发容器
             this.completionMap = parent.completionMap;
+            // 共用同一个action
             this.action = parent.action;
             this.leftPredecessor = leftPredecessor;
         }
@@ -485,7 +538,7 @@ final class ForEachOps {
             while (rightSplit.estimateSize() > sizeThreshold &&
                    (leftSplit = rightSplit.trySplit()) != null) {
                 ForEachOrderedTask<S, T> leftChild =
-                    new ForEachOrderedTask<>(task, leftSplit, task.leftPredecessor);
+                        new ForEachOrderedTask<>(task, leftSplit, task.leftPredecessor);
                 ForEachOrderedTask<S, T> rightChild =
                         // 将左节点 作为右对象的 leftPredecessor
                     new ForEachOrderedTask<>(task, rightSplit, leftChild);
@@ -493,15 +546,17 @@ final class ForEachOps {
                 // Fork the parent task
                 // Completion of the left and right children "happens-before"
                 // completion of the parent
+                // 代表在完成父节点前必须先完成 左右节点
                 task.addToPendingCount(1);
                 // Completion of the left child "happens-before" completion of
                 // the right child
-                // 这里为什么要加
+                // 完成右节点前必须先完成 左节点
                 rightChild.addToPendingCount(1);
-                // 将左右节点保存
+                // 将左右节点保存  这样可以通过 left 定位到 right
                 task.completionMap.put(leftChild, rightChild);
 
                 // If task is not on the left spine
+                // 如果 存在 前置左节点 那么该任务现在还不能执行
                 if (task.leftPredecessor != null) {
                     /*
                      * Completion of left-predecessor, or left subtree,
@@ -562,16 +617,16 @@ final class ForEachOps {
                 Node.Builder<T> nb = task.helper.makeNodeBuilder(
                         task.helper.exactOutputSizeIfKnown(rightSplit),
                         generator);
-                // 将数据拷贝到node 中
                 task.node = task.helper.wrapAndCopyInto(nb, rightSplit).build();
                 task.spliterator = null;
             }
-            // 减少 pending
+            // 当本任务完成时触发 如果该对象上的悬挂节点 全部执行完后 触发 onCompletion
+            // 否则 将悬挂数 -1
             task.tryComplete();
         }
 
         /**
-         * caller 没被使用
+         * 这里不细看了 实际上 即使是顺序处理 每个节点 也是使用了wrap 后的 sink 进行数据传递的
          * @param caller the task invoking this method (which may
          * be this task itself)
          */
@@ -579,7 +634,7 @@ final class ForEachOps {
         public void onCompletion(CountedCompleter<?> caller) {
             if (node != null) {
                 // Dump buffered elements from this leaf into the sink
-                // 将节点中所有元素 都是用 action 进行处理
+                // 将节点中所有元素 使用action 去处理
                 node.forEach(action);
                 node = null;
             }

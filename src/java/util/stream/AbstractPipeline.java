@@ -269,7 +269,8 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
         return isParallel()
                 // 代表并行执行
                ? terminalOp.evaluateParallel(this, sourceSpliterator(terminalOp.getOpFlags()))
-                // 代表串行执行
+                // 代表串行执行  注意这里的 this一般不是 head 所在的 pipeline 而是在 执行 比如 filter() 后 生成的op 对象 (op对象实现了 pipeline)
+                // sourceSpliterator 返回了 包含源数据的迭代器
                : terminalOp.evaluateSequential(this, sourceSpliterator(terminalOp.getOpFlags()));
     }
 
@@ -571,50 +572,68 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
     }
 
     /**
-     * 包装sink 拷贝信息
-     * @param sink the {@code Sink} to receive the results
-     * @param spliterator the spliterator describing the source input to process
+     * @param sink the {@code Sink} to receive the results  sink 对象包装了数据的处理逻辑
+     * @param spliterator the spliterator describing the source input to process 数据源的迭代器
      * @param <P_IN>
      * @param <S>
      * @return
      */
     @Override
     final <P_IN, S extends Sink<E_OUT>> S wrapAndCopyInto(S sink, Spliterator<P_IN> spliterator) {
+        // wrapSink 对 sink 对象做包装处理 该方法会从 最下层开始(非终结操作的其他 op节点) 开始增加逻辑 并不断往上传递
+        // 此时 sink 只有逻辑 而没有 基础的数据 这时就要从 sourceSpliterator中获取
         copyInto(wrapSink(Objects.requireNonNull(sink)), spliterator);
         return sink;
     }
 
+    /**
+     * 将source 中的元素 通过层层包装的sink 处理后 到达底部并保存在sink 对象中
+     * @param wrappedSink the destination {@code Sink}
+     * @param spliterator the source {@code Spliterator}
+     * @param <P_IN>
+     */
     @Override
     final <P_IN> void copyInto(Sink<P_IN> wrappedSink, Spliterator<P_IN> spliterator) {
         Objects.requireNonNull(wrappedSink);
 
         /**
-         * 没有短路的情况 使用指定长度 初始化 sink容器 sink 默认实现是Node对象
-         *
+         * 判断是否有 例如 anyMatch() 等短路 op  该对象的 combineFlag 是 之前所有节点的特性总和
          */
         if (!StreamOpFlag.SHORT_CIRCUIT.isKnown(getStreamAndOpFlags())) {
+            // 不包含短路的情况下 将所有元素传入到 被包装的 sink 对象中
             wrappedSink.begin(spliterator.getExactSizeIfKnown());
-            // 将元素 填充到容器中
+            // 该sink 对象 保存了一系列 处理上游元素的逻辑 该链式 就像是 AOP 一样 针对一个动作层层包装
+            // 比如针对 Array.stream().collect()  list 中每个元素都会经过一条链后 进入到最后的list 中
             spliterator.forEachRemaining(wrappedSink);
+            // 传递 后置处理链
             wrappedSink.end();
         }
         else {
-            // 如果发生了短路
+            // 如果是存在短路的 op链
             copyIntoWithCancel(wrappedSink, spliterator);
         }
     }
 
+    /**
+     * 处理可能会出现短路的 调用链
+     * @param wrappedSink the destination {@code Sink}  层层包装后生成的sink 对象
+     * @param spliterator the source {@code Spliterator}  内部包含 source 数据的迭代器
+     * @param <P_IN>
+     */
     @Override
     @SuppressWarnings("unchecked")
     final <P_IN> void copyIntoWithCancel(Sink<P_IN> wrappedSink, Spliterator<P_IN> spliterator) {
         @SuppressWarnings({"rawtypes","unchecked"})
         AbstractPipeline p = AbstractPipeline.this;
+        // 这里获取了 最上层的 op 对象
         while (p.depth > 0) {
             p = p.previousStage;
         }
         // 初始化内部的数组
         wrappedSink.begin(spliterator.getExactSizeIfKnown());
+        // 这里应该是一旦有某个数据满足条件就结束传递数据
         p.forEachWithCancel(spliterator, wrappedSink);
+        // 执行后置钩子
         wrappedSink.end();
     }
 
@@ -639,7 +658,8 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
         Objects.requireNonNull(sink);
 
         for ( @SuppressWarnings("rawtypes") AbstractPipeline p=AbstractPipeline.this; p.depth > 0; p=p.previousStage) {
-            // 使用 combinedFlag 去 包装信息
+            // 从当前节点往上不断的 包装 sink 对象 这时 越上面的节点就在越外层 也就是逻辑是从外层开始处理并往下传播的
+            // 而当前节点 不是终止操作 (例如 collect)
             sink = p.opWrapSink(p.previousStage.combinedFlags, sink);
         }
         return (Sink<P_IN>) sink;
@@ -746,6 +766,7 @@ abstract class AbstractPipeline<E_IN, E_OUT, S extends BaseStream<E_OUT, S>>
      *
      * @param spliterator the spliterator to pull elements from
      * @param sink the sink to push elements to
+     *             针对可能会出现短路的情况 只要有某个元素 符合条件了 就不再处理source中其他元素了
      */
     abstract void forEachWithCancel(Spliterator<E_OUT> spliterator, Sink<E_OUT> sink);
 

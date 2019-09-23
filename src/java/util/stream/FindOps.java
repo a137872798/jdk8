@@ -198,7 +198,7 @@ final class FindOps {
      *
      * @param <T> The type of input element
      * @param <O> The result type, typically an optional type
-     *           具备 find 功能的 可下沉对象
+     *           具备 find 功能的 下沉对象
      */
     private static abstract class FindSink<T, O> implements TerminalSink<T, O> {
 
@@ -213,6 +213,10 @@ final class FindOps {
 
         FindSink() {} // Avoid creation of special accessor
 
+        /**
+         * source 中每个元素 都经过整个sink 链到达底部 只要有首个进入到底部 设置 hasValue == true 实现短路
+         * @param value
+         */
         @Override
         public void accept(T value) {
             if (!hasValue) {

@@ -194,10 +194,11 @@ abstract class AbstractTask<P_IN, P_OUT, R,
     /**
      * Returns a suggested target leaf size based on the initial size estimate.
      *
-     * @return suggested target leaf size
+     * @return suggested target leaf size 入参代表初始长度
      * 获取建议的长度
      */
     public static long suggestTargetSize(long sizeEstimate) {
+        // 就是将 初始长度 / (FJPool的并行度*4)
         long est = sizeEstimate / LEAF_TARGET;
         return est > 0L ? est : 1L;
     }

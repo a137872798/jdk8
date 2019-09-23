@@ -1323,6 +1323,7 @@ public class ArrayList<E> extends AbstractList<E>
             this.list = list; // OK if null unless traversed
             this.index = origin;
             this.fence = fence;
+            // 创建时该值默认为0
             this.expectedModCount = expectedModCount;
         }
 
@@ -1347,6 +1348,11 @@ public class ArrayList<E> extends AbstractList<E>
                                             expectedModCount);
         }
 
+        /**
+         * 将source 中某个元素 使用action 进行处理
+         * @param action The action
+         * @return
+         */
         public boolean tryAdvance(Consumer<? super E> action) {
             if (action == null)
                 throw new NullPointerException();
@@ -1362,6 +1368,11 @@ public class ArrayList<E> extends AbstractList<E>
             return false;
         }
 
+        /**
+         * 该 action 是 sink 对象 调用该方法的时机是最下游的pipe 调用终结方法时 构建了一个sink 对象 并往上传递 将 遇到的op 对象逻辑全部组装后 在最下游的pipeline中 使用source调用该方法
+         * 传入的 action 就是层层包装后的结果
+         * @param action The action
+         */
         public void forEachRemaining(Consumer<? super E> action) {
             int i, hi, mc; // hoist accesses and checks from loop
             ArrayList<E> lst; Object[] a;
@@ -1373,9 +1384,11 @@ public class ArrayList<E> extends AbstractList<E>
                     hi = lst.size;
                 }
                 else
+                    // 第一次循环为0
                     mc = expectedModCount;
                 if ((i = index) >= 0 && (index = hi) <= a.length) {
                     for (; i < hi; ++i) {
+                        // 迭代 list 中的元素 这时该action 实际上经过了一连串的处理 并到达最终的sink 对象
                         @SuppressWarnings("unchecked") E e = (E) a[i];
                         action.accept(e);
                     }
@@ -1390,6 +1403,10 @@ public class ArrayList<E> extends AbstractList<E>
             return (long) (getFence() - index);
         }
 
+        /**
+         * 代表该数据流是 有序的 有固定长度的  且它的子数据流 （也就是在拆分后） 还是有数据
+         * @return
+         */
         public int characteristics() {
             return Spliterator.ORDERED | Spliterator.SIZED | Spliterator.SUBSIZED;
         }

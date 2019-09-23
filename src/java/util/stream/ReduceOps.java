@@ -47,7 +47,6 @@ import java.util.function.Supplier;
  * reductions.
  *
  * @since 1.8
- * 针对 减少的 终止操作
  */
 final class ReduceOps {
 
@@ -167,6 +166,7 @@ final class ReduceOps {
      * @param <I> the type of the intermediate reduction result
      * @param collector a {@code Collector} defining the reduction
      * @return a {@code ReduceOp} implementing the reduction
+     * 代表终止的动作 会触发之前写入的 各个op 对象
      */
     public static <T, I> TerminalOp<T, I>
     makeRef(Collector<? super T, I, ?> collector) {
@@ -175,29 +175,52 @@ final class ReduceOps {
         BinaryOperator<I> combiner = collector.combiner();
         class ReducingSink extends Box<I>
                 implements AccumulatingSink<T, I, ReducingSink> {
+
+            /**
+             * 终止节点的开始动作  获取到最初的容器后设置到state 中 state是BOX 的字段 看起来像是避免重复拆包装的
+             * begin 的入参是 source 的元素个数 而该方法忽略了size 而是直接通过提供者 获取了初始化容器的方法
+             */
             @Override
             public void begin(long size) {
                 state = supplier.get();
             }
 
+            /**
+             * 数据执行的逻辑是这样的 source 中每个元素 都会经过一系列的处理链 并在最后到达该sink 设置到容器中
+             * @param t the input argument
+             */
             @Override
             public void accept(T t) {
                 accumulator.accept(state, t);
             }
 
+            /**
+             * 将2端的数据结合起来
+             * @param other
+             */
             @Override
             public void combine(ReducingSink other) {
                 state = combiner.apply(state, other.state);
             }
         }
         return new ReduceOp<T, I, ReducingSink>(StreamShape.REFERENCE) {
+
+            /**
+             * 生成一个下游对象 这里使用了 局部class
+             * @return
+             */
             @Override
             public ReducingSink makeSink() {
                 return new ReducingSink();
             }
 
+            /**
+             * 这里返回流的特性
+             * @return
+             */
             @Override
             public int getOpFlags() {
+                // 如果 collector 是无序的 就返回无序
                 return collector.characteristics().contains(Collector.Characteristics.UNORDERED)
                        ? StreamOpFlag.NOT_ORDERED
                        : 0;
@@ -698,7 +721,7 @@ final class ReduceOps {
      * @param <T> the output type of the stream pipeline
      * @param <R> the result type of the reducing operation
      * @param <S> the type of the {@code AccumulatingSink}
-     *           减少操作  TerminalOp 接口 具备 并行处理结果 和串行处理结果
+     *           代表触发流并获取结果的op
      */
     private static abstract class ReduceOp<T, R, S extends AccumulatingSink<T, R, S>>
             implements TerminalOp<T, R> {
@@ -717,6 +740,10 @@ final class ReduceOps {
             inputShape = shape;
         }
 
+        /**
+         * 获取下沉类对象 在对应的方法中有设置 局部类
+         * @return
+         */
         public abstract S makeSink();
 
         @Override
@@ -724,15 +751,22 @@ final class ReduceOps {
             return inputShape;
         }
 
+        /**
+         * 串行执行  在终止操作中会触发 evaluate 之后根据 是串行 or 并行 计算结果
+         * @param helper the pipeline helper  代表上个节点  比如 .filter().collect() 在filter 后会返回一个op 对象定义了 针对上个节点的数据传递逻辑
+         * @param spliterator the source spliterator  数据源
+         * @param <P_IN>
+         * @return
+         */
         @Override
         public <P_IN> R evaluateSequential(PipelineHelper<T> helper,
                                            Spliterator<P_IN> spliterator) {
-            // 将数据填充到 容器中就是计算吗???
+            // 这里返回 sink 对象后 通过get() 获取结果 应该就是获取里面的 state 属性
             return helper.wrapAndCopyInto(makeSink(), spliterator).get();
         }
 
         /**
-         * 通过forkjoin 计算结果
+         * 并行执行
          * @param helper the pipeline helper
          * @param spliterator the source spliterator
          * @param <P_IN>

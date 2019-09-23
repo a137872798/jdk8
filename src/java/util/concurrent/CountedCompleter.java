@@ -440,6 +440,7 @@ public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
      * and an initial pending count of zero.
      *
      * @param completer this task's completer, or {@code null} if none
+     *                  在 Stream 框架中 completer 作为 task 的父节点对象
      */
     protected CountedCompleter(CountedCompleter<?> completer) {
         this.completer = completer;
@@ -598,6 +599,7 @@ public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
                 if ((a = (s = a).completer) == null) {
                     // 如果不存在下个节点了 就 执行 quietlyComplete
                     // 就是在 整个任务级别 调用 setComplete(Normal)
+                    // 代表整个任务完成
                     s.quietlyComplete();
                     return;
                 }
