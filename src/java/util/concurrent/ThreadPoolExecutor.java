@@ -1205,6 +1205,10 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
 
             // Check if queue empty only if necessary.
             // 如果是 STOP 级别 不允许 返回任务 如果工作队列为 空 也无法返回任务 而针对 SHUTDOWN 级别是允许返回任务的
+            // 调用shutdown 方法时正在分为正在 阻塞等待任务的worker 和正在处理任务的worker  前者没有加锁 会被全部唤醒 之后进入这个分支判断 工作队列已经是空了 释放本线程
+            // 而正在处理任务中的worker 会进入下次循环(也就是处理完当前任务后) 在这里判断workerQueue同样为空 释放线程
+            // 而如果 工作队列还有任务的情况下 就不考虑 阻塞等待任务的worker  这样正在处理任务的worker 发现队列中还有任务会继续执行
+            // 而如果调用shutdownNow rs会变成STOP 那么无论队列中是否还有任务不再拉取任务
             if (rs >= SHUTDOWN && (rs >= STOP || workQueue.isEmpty())) {
                 // 这里减少 worker 数量 因为无法在拉取任务了
                 decrementWorkerCount();
@@ -1301,7 +1305,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         try {
             // 如果 使用 firstTask == null 的方式 来执行 addWorker 就会出现 worker 对象 task == null 那么就会从 getTask 拉取任务
             while (task != null || (task = getTask()) != null) {
-                // 这里上锁 是为了不让正在处理任务的 worker被打断 因为 在 beforeExecute 等方法中可能埋了有关 打断 的逻辑处理
+                // work 在这里上锁后 当调用shutdown 时 tryAquire 就会返回false 不会立即释放工作线程  注意是在获取到任务并准备处理时 才上锁
                 w.lock();
                 // If pool is stopping, ensure thread is interrupted;
                 // if not, ensure thread is not interrupted.  This
