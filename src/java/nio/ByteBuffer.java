@@ -306,6 +306,7 @@ public abstract class ByteBuffer
      *
      * @throws  IllegalArgumentException
      *          If the <tt>capacity</tt> is a negative integer
+     *          构建一个基于 直接内存的bytebuffer
      */
     public static ByteBuffer allocateDirect(int capacity) {
         return new DirectByteBuffer(capacity);
@@ -328,6 +329,7 @@ public abstract class ByteBuffer
      *
      * @throws  IllegalArgumentException
      *          If the <tt>capacity</tt> is a negative integer
+     *          创建一个 基于 byte[] 的buffer 对象   默认情况起始偏移量为0
      */
     public static ByteBuffer allocate(int capacity) {
         if (capacity < 0)

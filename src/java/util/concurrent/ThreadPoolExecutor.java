@@ -1311,7 +1311,6 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                 // if not, ensure thread is not interrupted.  This
                 // requires a recheck in second case to deal with
                 // shutdownNow race while clearing interrupt
-                // 这里没看明白
                 if ( (runStateAtLeast(ctl.get(), STOP) || (Thread.interrupted() && runStateAtLeast(ctl.get(), STOP)))
                         && !wt.isInterrupted() )
                     wt.interrupt();

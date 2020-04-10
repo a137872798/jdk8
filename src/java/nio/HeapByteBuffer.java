@@ -94,15 +94,18 @@ class HeapByteBuffer
 
     }
 
+    // 创建一个分片对象 特点就是跟之前共用同一个buffer
     public ByteBuffer slice() {
         return new HeapByteBuffer(hb,
                                         -1,
                                         0,
+                                        this.remaining(),   // 能访问的长度就是剩余长度
                                         this.remaining(),
-                                        this.remaining(),
+                                        // 将 当前指针作为起始偏移量
                                         this.position() + offset);
     }
 
+    // 创建一个副本对象 使用同一块内存(byte[]) 但是单独维护一份指针
     public ByteBuffer duplicate() {
         return new HeapByteBuffer(hb,
                                         this.markValue(),

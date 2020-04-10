@@ -117,25 +117,32 @@ class DirectByteBuffer
     DirectByteBuffer(int cap) {                   // package-private
 
         super(-1, 0, cap, cap);
+        // 内存页是否对齐
         boolean pa = VM.isDirectMemoryPageAligned();
+        // 内存页大小
         int ps = Bits.pageSize();
         long size = Math.max(1L, (long)cap + (pa ? ps : 0));
         Bits.reserveMemory(size, cap);
 
         long base = 0;
         try {
+            // 使用unsafe 直接分配物理内存  这里返回的是物理偏移量   如果按页对齐的话就不能直接使用这个偏移量了 要先切换到下一页
             base = unsafe.allocateMemory(size);
         } catch (OutOfMemoryError x) {
             Bits.unreserveMemory(size, cap);
             throw x;
         }
+        // 使用 0 填充这段内存  (如果此时还在上一页刚好用0填充 并进入下一页)
         unsafe.setMemory(base, size, (byte) 0);
+        // base % ps == 0 代表此时的base  刚好在某个页的起点
         if (pa && (base % ps != 0)) {
-            // Round up to page boundary
+            // Round up to page boundary  切换到下一个页的起点
             address = base + ps - (base & (ps - 1));
         } else {
+            // 不需要对齐 直接使用 base 作为起点偏移量
             address = base;
         }
+        // 创建 cleaner 对象 用于回收直接内存
         cleaner = Cleaner.create(this, new Deallocator(base, size, cap));
         att = null;
 

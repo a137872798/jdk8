@@ -44,6 +44,7 @@ import java.nio.ByteBuffer;
  * @author Mark Reinhold
  * @author JSR-51 Expert Group
  * @since 1.4
+ * 代表可以将数据读取到多个 byteBuffer 中   比如一个数据头 12字节  一个数据体 50字节  那么预先创建2个bytebuffer 大小分别为 12 和 50 通过 read(ByteBuffer[]) 可以直接将数据填充到2个数组
  */
 
 public interface ScatteringByteChannel

@@ -183,12 +183,16 @@ public abstract class Buffer {
 
     // Invariants: mark <= position <= limit <= capacity
     private int mark = -1;
+    /**
+     * 代表起始偏移量 当往buffer插入数据时 从这个位置开始
+     */
     private int position = 0;
     private int limit;
     private int capacity;
 
     // Used only by direct buffers
     // NOTE: hoisted here for speed in JNI GetDirectBufferAddress
+    // 代表这段物理内存的起始偏移量
     long address;
 
     // Creates a new buffer with the given mark, position, limit, and capacity,
