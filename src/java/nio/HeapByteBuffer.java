@@ -94,6 +94,8 @@ class HeapByteBuffer
 
     }
 
+    // 视图对象本身是不拷贝 大小端信息的
+
     // 创建一个分片对象 特点就是跟之前共用同一个buffer
     public ByteBuffer slice() {
         return new HeapByteBuffer(hb,
@@ -228,6 +230,7 @@ class HeapByteBuffer
 
     public ByteBuffer compact() {
 
+        // 移动数据 并根据remaining计算pos
         System.arraycopy(hb, ix(position()), hb, ix(0), remaining());
         position(remaining());
         limit(capacity());
@@ -369,7 +372,11 @@ class HeapByteBuffer
     }
 
 
-
+    /**
+     * 往 byteBuffer 添加int时 自动将int通过位运算生成了 byte[]
+     * @param x
+     * @return
+     */
     public ByteBuffer putInt(int x) {
 
         Bits.putInt(this, ix(nextPutIndex(4)), x, bigEndian);

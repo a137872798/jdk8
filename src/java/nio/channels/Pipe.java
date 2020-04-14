@@ -47,6 +47,7 @@ import java.nio.channels.spi.*;
  * @author Mark Reinhold
  * @author JSR-51 Expert Group
  * @since 1.4
+ * 管道对象
  */
 
 public abstract class Pipe {

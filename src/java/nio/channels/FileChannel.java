@@ -152,6 +152,13 @@ import java.util.Collections;
  * @since 1.4
  */
 
+/**
+ * 实际上往FileChannel 写入数据时 即使使用的是基于Heap的 bytebuffer 底层也会申请一个临时的 directByteBuffer
+ *             以下代码来自 IOUtil.read()
+ *             ByteBuffer var5 = Util.getTemporaryDirectBuffer(var1.remaining());
+ *
+ *             而且directByteBuffer的分配开销较大 还是用 bufferCache 作为缓存
+ */
 public abstract class FileChannel
     extends AbstractInterruptibleChannel
     implements SeekableByteChannel, GatheringByteChannel, ScatteringByteChannel

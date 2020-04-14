@@ -45,6 +45,8 @@ import java.nio.ByteBuffer;
  * @author JSR-51 Expert Group
  * @since 1.4
  * 代表可以将数据读取到多个 byteBuffer 中   比如一个数据头 12字节  一个数据体 50字节  那么预先创建2个bytebuffer 大小分别为 12 和 50 通过 read(ByteBuffer[]) 可以直接将数据填充到2个数组
+ * 这类api出现是因为 底层操作系统对这种操作做了优化
+ * 可以看到SocketChannelImpl的相关方法都是利用 DirectByteBuffer 进行写入的
  */
 
 public interface ScatteringByteChannel
@@ -120,6 +122,7 @@ public interface ScatteringByteChannel
      *
      * @throws  IOException
      *          If some other I/O error occurs
+     *          后面2个参数是关于 如何选择 dsts中的byteBuffer 而不是针对某个byteBuffer的偏移量
      */
     public long read(ByteBuffer[] dsts, int offset, int length)
         throws IOException;

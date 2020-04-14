@@ -215,6 +215,12 @@ class Bits {                            // package-private
                 ((b0 & 0xff)      ));
     }
 
+    /**
+     * 小端法换算int类型 则是取4位中第四个字节作为最高位  通过 << 24 计算最高位值
+     * @param bb
+     * @param bi
+     * @return
+     */
     static int getIntL(ByteBuffer bb, int bi) {
         return makeInt(bb._get(bi + 3),
                        bb._get(bi + 2),
@@ -229,6 +235,12 @@ class Bits {                            // package-private
                        _get(a    ));
     }
 
+    /**
+     * 依照大端法 将byte流换算成 int类型  大端法代表byte流是正序的 高位在前
+     * @param bb
+     * @param bi
+     * @return
+     */
     static int getIntB(ByteBuffer bb, int bi) {
         return makeInt(bb._get(bi    ),
                        bb._get(bi + 1),

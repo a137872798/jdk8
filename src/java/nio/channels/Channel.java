@@ -51,6 +51,7 @@ import java.io.Closeable;
  * @author Mark Reinhold
  * @author JSR-51 Expert Group
  * @since 1.4
+ * 模拟数据传输管道
  */
 
 public interface Channel extends Closeable {

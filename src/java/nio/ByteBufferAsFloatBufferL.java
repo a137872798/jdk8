@@ -28,6 +28,9 @@
 package java.nio;
 
 
+/**
+ * 基于小端法   所以 ByteBuffer本身是没有大端小端的区别的 他只是byte流  涉及到 byte 与其他基本类型的转换时 才真正使用到 大端小端 按照类型长度读取 byte流 并使用位运算计算真正的值
+ */
 class ByteBufferAsFloatBufferL                  // package-private
     extends FloatBuffer
 {

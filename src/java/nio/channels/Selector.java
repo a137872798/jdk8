@@ -201,6 +201,7 @@ import java.util.Set;
  *
  * @see SelectableChannel
  * @see SelectionKey
+ * 默认情况 管理selectKey 的集合是 hashSet  记得netty是优化成数组  能够快这么多吗 ??
  */
 
 public abstract class Selector implements Closeable {

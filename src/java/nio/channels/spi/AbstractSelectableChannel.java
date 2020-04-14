@@ -197,8 +197,10 @@ public abstract class AbstractSelectableChannel
                 throw new ClosedChannelException();
             if ((ops & ~validOps()) != 0)
                 throw new IllegalArgumentException();
+            // 注意 将一个channel 注册到选择器上之前必须确保channel已经设置成非阻塞模式
             if (blocking)
                 throw new IllegalBlockingModeException();
+            // 如果之前已经注册了 那么本次只是更新 interestOps 和 attach
             SelectionKey k = findKey(sel);
             if (k != null) {
                 k.interestOps(ops);
@@ -289,6 +291,7 @@ public abstract class AbstractSelectableChannel
                 throw new ClosedChannelException();
             if (blocking == block)
                 return this;
+            // 此时channel 已经注册在某个 selector 不允许修改成阻塞模式
             if (block && haveValidKeys())
                 throw new IllegalBlockingModeException();
             implConfigureBlocking(block);

@@ -105,6 +105,7 @@ import java.io.IOException;
  *
  * @see SelectableChannel
  * @see Selector
+ * 当一个 SelectableChannel 注册到一个 Selector上时 就会生成一个SelectionKey 对象 通过该对象可以直接获取到 对应的选择器和管道对象 以及感兴趣的事件
  */
 
 public abstract class SelectionKey {

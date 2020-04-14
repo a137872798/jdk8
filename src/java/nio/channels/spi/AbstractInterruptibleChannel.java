@@ -151,6 +151,7 @@ public abstract class AbstractInterruptibleChannel
      * method, using a <tt>try</tt>&nbsp;...&nbsp;<tt>finally</tt> block as
      * shown <a href="#be">above</a>, in order to implement asynchronous
      * closing and interruption for this channel.  </p>
+     * 调用accept()时会间接触发该方法 进而初始化 interruptor 字段
      */
     protected final void begin() {
         if (interruptor == null) {
@@ -191,16 +192,38 @@ public abstract class AbstractInterruptibleChannel
      *
      * @throws  ClosedByInterruptException
      *          If the thread blocked in the I/O operation was interrupted
+     *          在ServerSocketChannelImpl 的实现中可以看到 当调用 ServerSocketChannel.accept() 在阻塞状态下 如果某个线程打断了之前阻塞的线程会间接触发该方法(在finish中) 进而抛出一个异常
+     *             try {
+     *                     this.begin();
+     *                     if (!this.isOpen()) {
+     *                         var6 = null;
+     *                         return var6;
+     *                     }
+     *
+     *                     this.thread = NativeThread.current();
+     *
+     *                     do {
+     *                         var3 = this.accept(this.fd, var4, var5);
+     *                     } while(var3 == -3 && this.isOpen());
+     *                 } finally {
+     *                     this.thread = 0L;
+     *                     this.end(var3 > 0);
+     *
+     *                     assert IOStatus.check(var3);
+     *
+     *                 }
      */
     protected final void end(boolean completed)
         throws AsynchronousCloseException
     {
         blockedOn(null);
+        // 如果是调用accept的线程被打断抛出ClosedByInterruptException
         Thread interrupted = this.interrupted;
         if (interrupted != null && interrupted == Thread.currentThread()) {
             interrupted = null;
             throw new ClosedByInterruptException();
         }
+        // 非调用accept的线程被打断触发AsynchronousCloseException
         if (!completed && !open)
             throw new AsynchronousCloseException();
     }

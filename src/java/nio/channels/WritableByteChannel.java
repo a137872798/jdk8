@@ -43,6 +43,7 @@ import java.nio.ByteBuffer;
  * @author Mark Reinhold
  * @author JSR-51 Expert Group
  * @since 1.4
+ * 因为底层操作系统 IO 一般都是基于byte的 所以channel的2个子类 一个叫做 WritableByteChannel 一个是 ReadableByteChannel
  */
 
 public interface WritableByteChannel

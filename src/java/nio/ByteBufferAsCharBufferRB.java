@@ -28,6 +28,9 @@
 package java.nio;
 
 
+/**
+ * 只读缓冲区 当调用类似 put() 的方法时自动抛出异常
+ */
 class ByteBufferAsCharBufferRB                  // package-private
     extends ByteBufferAsCharBufferB
 {

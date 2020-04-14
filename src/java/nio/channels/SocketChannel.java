@@ -209,6 +209,7 @@ public abstract class SocketChannel
      * SelectionKey#OP_WRITE}<tt>)</tt>.  </p>
      *
      * @return  The valid-operation set
+     * socketChannel 不支持 accept事件
      */
     public final int validOps() {
         return (SelectionKey.OP_READ

@@ -85,8 +85,17 @@ public abstract class AbstractSelector
         this.provider = provider;
     }
 
+    /**
+     * 内部存放了已经被关闭的选择键
+     */
     private final Set<SelectionKey> cancelledKeys = new HashSet<SelectionKey>();
 
+    /**
+     * 当关闭某个 selectionKey 时 并没有直接注销掉本次连接 只是将key 添加到一个 cancelledKeys中
+     * 从 WindowsSelectorImpl 可以看到在 doSelect 的前后会通过调用            this.processDeregisterQueue();
+     * 找到  cancelledKeys 并挨个进行注销 也就是 cancel没有立即关闭
+     * @param k
+     */
     void cancel(SelectionKey k) {                       // package-private
         synchronized (cancelledKeys) {
             cancelledKeys.add(k);

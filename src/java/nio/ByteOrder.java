@@ -32,6 +32,7 @@ package java.nio;
  * @author Mark Reinhold
  * @author JSR-51 Expert Group
  * @since 1.4
+ * 通过该对象可以知道本机采用大端/小端法    以及 网络中数据流传输默认使用大端法
  */
 
 public final class ByteOrder {

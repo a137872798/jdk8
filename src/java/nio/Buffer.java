@@ -328,6 +328,7 @@ public abstract class Buffer {
      * in which that might as well be the case. </p>
      *
      * @return  This buffer
+     * 只是重置指针没有释放内存  (基于heap的还好 会被GC自动回收)
      */
     public final Buffer clear() {
         position = 0;
@@ -358,7 +359,7 @@ public abstract class Buffer {
      * @return  This buffer
      */
     public final Buffer flip() {
-        limit = position;
+        limit = position; // limit 是 允许读取的上界 当填充数据后 调用flip 就可以进行读取了
         position = 0;
         mark = -1;
         return this;
@@ -378,6 +379,7 @@ public abstract class Buffer {
      * buf.get(array);    // Copy data into array</pre></blockquote>
      *
      * @return  This buffer
+     * 这个方法不会修改 limit  (可以重新读取缓冲区内的数据)
      */
     public final Buffer rewind() {
         position = 0;

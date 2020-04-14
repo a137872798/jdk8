@@ -93,6 +93,7 @@ import java.util.concurrent.Future;  // javadoc
  * the channel remains open.
  *
  *  @since 1.7
+ *  aio 完全在操作系统层面完成异步读取 之后操作系统回调进程通知结果
  */
 
 public interface AsynchronousChannel
