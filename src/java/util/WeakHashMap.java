@@ -132,6 +132,7 @@ import java.util.function.Consumer;
  * @since       1.2
  * @see         java.util.HashMap
  * @see         java.lang.ref.WeakReference
+ * 该map的 key 是被弱引用包裹 也就是key没有被强引用包裹时 那么就会被移除
  */
 public class WeakHashMap<K,V>
     extends AbstractMap<K,V>
@@ -176,6 +177,7 @@ public class WeakHashMap<K,V>
 
     /**
      * Reference queue for cleared WeakEntries
+     * 该引用队列存放被回收的key
      */
     private final ReferenceQueue<Object> queue = new ReferenceQueue<>();
 
@@ -313,9 +315,12 @@ public class WeakHashMap<K,V>
 
     /**
      * Expunges stale entries from the table.
+     * 尝试移除已经过期的数据
      */
     private void expungeStaleEntries() {
+        // 通过引用队列快速找到被回收的key
         for (Object x; (x = queue.poll()) != null; ) {
+            // 锁的是引用队列 这样多条线程只会在这个方法竞争  性能相对较高
             synchronized (queue) {
                 @SuppressWarnings("unchecked")
                     Entry<K,V> e = (Entry<K,V>) x;
@@ -324,11 +329,15 @@ public class WeakHashMap<K,V>
                 Entry<K,V> prev = table[i];
                 Entry<K,V> p = prev;
                 while (p != null) {
+                    // 尝试获取链表上挂载的下一个元素
                     Entry<K,V> next = p.next;
+                    // 找到对应的槽后 按照链表往下走 这里代表 匹配到了那个应该被删除的节点
                     if (p == e) {
+                        // 代表是第一个节点 因为只有此时 p == prev
                         if (prev == e)
                             table[i] = next;
                         else
+                            // 把上个节点与下个节点相连 丢弃中间的节点
                             prev.next = next;
                         // Must not null out e.next;
                         // stale entries may be in use by a HashIterator
@@ -336,6 +345,7 @@ public class WeakHashMap<K,V>
                         size--;
                         break;
                     }
+                    // 代表当前节点不是被移除的那个 顺着链表往下走
                     prev = p;
                     p = next;
                 }
@@ -345,6 +355,7 @@ public class WeakHashMap<K,V>
 
     /**
      * Returns the table after first expunging stale entries.
+     * 获取数据前 惰性触发一次移除
      */
     private Entry<K,V>[] getTable() {
         expungeStaleEntries();
@@ -782,18 +793,25 @@ public class WeakHashMap<K,V>
         public boolean hasNext() {
             Entry<K,V>[] t = table;
 
+            // 代表当前还没有设置引用
             while (nextKey == null) {
+                // 初始状态 entry 还是 null
                 Entry<K,V> e = entry;
                 int i = index;
+                // 定位到某个不为空的slot
                 while (e == null && i > 0)
                     e = t[--i];
                 entry = e;
                 index = i;
+                // 代表index 已经是0了还是每数据
                 if (e == null) {
+                    // 避免持有强引用导致数据无法回收
                     currentKey = null;
                     return false;
                 }
+                // 持有key的强引用
                 nextKey = e.get(); // hold on to key in strong ref
+                // 代表该entry已经被回收   也就是说迭代器在遍历的时候是会跳过那些已经被移除的元素的
                 if (nextKey == null)
                     entry = entry.next;
             }
